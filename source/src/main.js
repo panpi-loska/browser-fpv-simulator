@@ -202,8 +202,12 @@ function setSound(on) { soundOn = on; audio.setEnabled(on); const p = loadPrefs(
 [...$('am').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setAmbient(i === 1); });
 updateMenuButtons();
 
+// libfpv opens its settings by itself when it sees a radio that is not set up yet, even in the menu, where
+// the mouse does not reach them: the settings open only when the pilot asks (F8, the Setup button)
+let overlayAsked = false;
 function enter(withOverlay) {
   entered = true; playing = true;
+  overlayAsked = !!withOverlay;
   document.activeElement?.blur?.();
   setState('g');
   $('d').textContent = 'Resume';
@@ -213,6 +217,7 @@ function enter(withOverlay) {
 }
 function openMenu() {
   playing = false;
+  overlayAsked = false;
   core.overlayOpen(false);
   core.setPaused(true);
   for (const k of held) core.key(k, false);
@@ -226,12 +231,14 @@ $('o').onclick = openMenu;
 const held = new Set();
 addEventListener('keydown', (e) => {
   if (!playing) {
+    if (e.code === 'F8' && document.body.classList.contains('m')) { e.preventDefault(); enter(true); return; }
     if ((e.code === 'Enter' || e.code === 'Space') && document.body.classList.contains('m') && e.target === document.body) { e.preventDefault(); enter(false); }
     return;
   }
   // F8 settings, Esc closes them: libfpv handles both; with the overlay open every key is its
   if (core.overlayWantsInput || core.overlayIsOpen) {
     core.key(e.code, true); held.add(e.code);
+    overlayAsked = core.overlayIsOpen;
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) core.text(e.key);
     if (e.code !== 'F5' && e.code !== 'F12') e.preventDefault();
     return;
@@ -240,6 +247,8 @@ addEventListener('keydown', (e) => {
   if (/^(Arrow|Space|Tab|F\d)/.test(e.code)) e.preventDefault();
   // the keyboard sticks and switches go to libfpv: W/S throttle, A/D yaw, arrows, Enter arm, T turtle
   core.key(e.code === 'Space' ? 'Enter' : e.code, true); held.add(e.code === 'Space' ? 'Enter' : e.code);
+  // the settings key (F8, or whatever it was rebound to) toggles them inside libfpv
+  if (core.overlayIsOpen) { overlayAsked = true; for (const k of held) core.key(k, false); held.clear(); return; }
   if (e.repeat) return;
   const n = /^Digit([1-6])$/.exec(e.code);
   if (n) goSpot(+n[1] - 1, true);
@@ -316,7 +325,10 @@ function frame(now) {
   // the OSD over the picture (digital, or analog effects off), and the F8 overlay
   const showOsd = entered && viewMode === 0 && f && !g.osdIn && !f.osdDisabled;
   const osd = showOsd ? core.osd(innerWidth, innerHeight, f.video.flags ? f.video.osdStyle : 0) : null;
-  const overlay = core.overlay(dt);
+  if (core.overlayIsOpen && !overlayAsked) core.overlayOpen(false);
+  let overlay = core.overlay(dt);
+  if (core.overlayIsOpen && !overlayAsked) { core.overlayOpen(false); overlay = null; }
+  if (!core.overlayIsOpen) overlayAsked = false;
   goggles.drawUICanvas(core, osd, overlay, [innerWidth, innerHeight]);
   document.body.classList.toggle('ov', !!overlay);
   audio.update(dt, { alt: view.pos[1], speed: f ? (f.speedKmh / 3.6) * 3 : 0, rain: env.rain });
