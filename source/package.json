@@ -1,0 +1,11 @@
+{
+  "name": "sodium-sky",
+  "private": true,
+  "type": "module",
+  "description": "An FPV drone simulator over a procedural city at dusk, with RC radio support, rendered with WebGPU in a single HTML file",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:min": "node build.mjs --min"
+  },
+  "license": "GPL-3.0-or-later"
+}

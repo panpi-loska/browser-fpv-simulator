@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang=en>
+<head>
+<meta charset=utf-8>
+<title>Sodium Sky · FPV</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=theme-color content=#07090c>
+<style>
+/* Sodium Sky. The class on <body> is the state of the page:
+   l = loading, m = menu, g = flying (g ov while libfpv's overlay is open), l e = failed to start */
+:root {
+  --amber: #ffad3b; --amber-d: #ffad3b55; --teal: #3fe0c5; --ink: #e9edf2; --dim: #8b96a3;
+  --panel: #07090cd9; --line: #ffad3b40;
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+html { background: #07090c; }
+body {
+  position: fixed; inset: 0; margin: 0; overflow: hidden; background: #07090c;
+  font: 500 clamp(12px, .45vw + .7vh, 17px)/1.45 var(--mono); color: var(--ink);
+  -webkit-user-select: none; user-select: none;
+}
+canvas { position: absolute; width: 100%; height: 100%; touch-action: none; transition: filter .8s, opacity 1.5s; }
+.g canvas { cursor: none; }
+.g.ov canvas { cursor: default; }
+body:not(.g) #c { filter: brightness(.62) saturate(1.1); }
+.l canvas { opacity: 0; }
+#osd { pointer-events: none; }
+
+/* ---- the menu: a side panel like a flight case, the live map behind it ---- */
+#m { position: absolute; inset: 0; transition: opacity .4s, visibility .4s; }
+.g #m { opacity: 0; visibility: hidden; }
+#panel {
+  position: absolute; left: 0; top: 0; bottom: 0; width: min(31em, 100vw); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 1.1em; padding: 1.8em 1.6em 1.2em; overflow: auto;
+  background: linear-gradient(90deg, #07090cf2 70%, #07090cb0); border-right: 1px solid var(--line);
+}
+header { display: flex; align-items: center; gap: .9em; }
+header svg { width: 3.4em; height: 3.4em; flex: none; filter: drop-shadow(0 0 .5em #ffad3b66); }
+h1 { margin: 0; font: 800 2.15em/1 var(--mono); letter-spacing: .12em; color: var(--amber); text-shadow: 0 0 .6em #ffad3b55; }
+h1 span { color: transparent; -webkit-text-stroke: 1.5px var(--teal); margin-left: .35em; text-shadow: none; }
+.tag { margin: .35em 0 0; font-size: .74em; letter-spacing: .22em; text-transform: uppercase; color: var(--dim); }
+p { margin: 0; }
+#a { display: grid; }
+#a > * { grid-area: 1/1; transition: opacity .6s, visibility .6s; }
+.m #l, .l #g { opacity: 0; visibility: hidden; }
+
+/* loading: a battery charging, cell by cell */
+#p { position: relative; height: 1.3em; margin: .5em 0 .9em; padding: 3px; border: 1px solid var(--amber); border-radius: 3px; }
+#p::after { content: ''; position: absolute; right: -6px; top: 30%; width: 4px; height: 40%; background: var(--amber); }
+#b { display: block; height: 100%; transform: scaleX(0); transform-origin: 0; will-change: transform;
+  background: repeating-linear-gradient(90deg, var(--amber) 0 calc(10% - 3px), transparent calc(10% - 3px) 10%); }
+#s, #w { font-size: .82em; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+#w { margin-top: 1em; color: var(--amber); }
+.e #p { visibility: hidden; }
+.e #s { font-size: 1em; letter-spacing: 0; text-transform: none; color: var(--ink); }
+
+#g { display: flex; flex-direction: column; gap: 1em; }
+.label { font-size: .7em; letter-spacing: .24em; text-transform: uppercase; color: var(--dim); margin-bottom: .45em; }
+.label::before { content: '// '; color: var(--amber); }
+
+/* option rows: a label and a segmented control */
+.opts { display: grid; gap: .35em; }
+.row { display: flex; align-items: center; gap: .3em; }
+.row > span:first-child { flex: 0 0 8.5em; font-size: .72em; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
+.row button {
+  flex: 1; padding: .5em .3em; border: 1px solid #ffffff1c; border-radius: 3px; background: none; color: var(--ink);
+  font: 600 .78em var(--mono); letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: background .12s, border-color .12s;
+}
+.row button:hover { border-color: var(--amber-d); }
+.row .on { background: var(--amber); border-color: var(--amber); color: #07090c; }
+#ca b { flex: 1.6; text-align: center; font-size: .9em; color: var(--teal); }
+#ca button { flex: .5; }
+#ca #cad { flex: 1.1; }
+.loc { font-size: 1.05em; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink); }
+.loc small { display: block; margin-top: .3em; font-size: .68em; font-weight: 500; letter-spacing: .04em; text-transform: none; color: var(--dim); line-height: 1.5; }
+#sp b { flex: 3; text-align: center; font-size: .82em; letter-spacing: .1em; text-transform: uppercase; color: var(--teal); }
+#sp button { flex: .45; }
+
+.act { display: flex; gap: .5em; margin-top: .2em; }
+#d, #rb { padding: .85em 1em; border-radius: 3px; font: 800 1em var(--mono); letter-spacing: .2em; text-transform: uppercase; cursor: pointer; }
+#d { flex: 1.6; border: 0; background: var(--amber); color: #07090c; box-shadow: 0 0 1.4em #ffad3b44; }
+#d:hover { filter: brightness(1.1); }
+#rb { flex: 1; border: 1px solid var(--teal); background: none; color: var(--teal); font-size: .8em; }
+#rb:hover { background: #3fe0c514; }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+#rs { font-size: .74em; letter-spacing: .06em; color: var(--dim); }
+#rs::before { content: '● '; color: #ff5a4f; }
+#rs.ok::before { color: var(--teal); }
+
+#f { margin-top: auto; font-size: .66em; line-height: 1.6; color: #6f7a86; }
+#f a { color: #a9b3be; }
+
+/* the keys, in a small card on the right, framed like a goggle feed */
+#k {
+  position: absolute; right: 1.6em; bottom: 1.6em; display: grid; grid-template-columns: auto auto; gap: .35em 1em;
+  padding: 1em 1.2em; font-size: .74em; color: #c3cad2; background: var(--panel); border-radius: 4px;
+}
+#k::before, #k::after { content: ''; position: absolute; width: 1em; height: 1em; border: 2px solid var(--amber); }
+#k::before { left: -1px; top: -1px; border-right: 0; border-bottom: 0; }
+#k::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
+#k kbd { display: inline-block; min-width: 1.2em; padding: .05em .4em; margin-right: .15em; border: 1px solid #ffffff33; border-radius: 3px; font: 600 1em var(--mono); color: var(--ink); text-align: center; }
+#k p { display: contents; }
+@media (max-width: 1100px), (max-height: 640px) { #k { display: none; } }
+@media (pointer: coarse) { #k { display: none; } }
+
+/* in flight */
+#o { position: absolute; top: .6em; right: .6em; display: none; padding: .3em .6em; border: 1px solid var(--amber); border-radius: 3px; background: #07090cc0; color: var(--amber); font: 700 1.3em var(--mono); }
+@media (pointer: coarse) { .g #o { display: block; } }
+#i { position: absolute; bottom: 16%; left: 1.2em; margin: 0; font: .78em/1.6 var(--mono); white-space: pre-wrap; text-shadow: 0 1px 4px #000; pointer-events: none; }
+#v {
+  position: absolute; left: 50%; bottom: 7%; transform: translate(-50%, .5em); padding: .45em 1.1em; border: 1px solid var(--amber-d); border-radius: 3px;
+  background: #07090cc8; font-size: .85em; letter-spacing: .18em; text-transform: uppercase; color: var(--amber);
+  opacity: 0; transition: opacity .3s, transform .3s; pointer-events: none;
+}
+#v.on { opacity: 1; transform: translate(-50%, 0); }
+body:not(.g) #v { display: none; }
+</style>
+</head>
+<body class=l>
+<canvas id=c></canvas>
+<canvas id=osd></canvas>
+<div id=m>
+  <aside id=panel>
+    <header>
+      <svg viewBox="0 0 64 64" fill=none stroke=#ffad3b stroke-width=2.4 aria-hidden=true>
+        <path d="M18 18 46 46M46 18 18 46" stroke-linecap=round />
+        <circle cx=15 cy=15 r=9 /><circle cx=49 cy=15 r=9 /><circle cx=15 cy=49 r=9 /><circle cx=49 cy=49 r=9 />
+        <rect x=26 y=25 width=12 height=14 rx=2 fill=#07090c />
+        <circle cx=32 cy=29 r=2.2 fill=#3fe0c5 stroke=none />
+      </svg>
+      <div>
+        <h1>SODIUM<span>SKY</span></h1>
+        <p class=tag>FPV after dark · Betaflight in the loop</p>
+      </div>
+    </header>
+    <div id=a>
+      <div id=l><div id=p><i id=b></i></div><p id=s>Powering up…</p><p id=w hidden>Use Chrome or Edge for the best experience</p></div>
+      <div id=g>
+        <div><p class=label>Location</p><p class=loc>Halvard Bay <small>river city at dusk · towers, bridges, the elevated train, cranes over the building sites</small></p></div>
+        <div class=opts>
+          <p class=label>Flight</p>
+          <p class=row id=sp><span>Launch</span><button id=spl aria-label="Previous launch spot">◀</button><b id=spn></b><button id=spr aria-label="Next launch spot">▶</button></p>
+          <p class=row id=ca><span>Camera angle</span><button id=cal aria-label="Lower the camera">◀</button><b id=can></b><button id=car aria-label="Raise the camera">▶</button><button id=cad>Quad's</button></p>
+          <p class=row id=t><span>Time</span><button>Dusk</button><button>Night</button><button>Dawn</button></p>
+          <p class=row id=r><span>Weather</span><button>Clear</button><button>Rain</button></p>
+          <p class=row id=sg><span>Video range</span><button>Real</button><button>Unlimited</button></p>
+          <p class=row id=am><span>Ambience</span><button>Off</button><button>On</button></p>
+          <p class=row id=q><span>Detail</span><button>Low</button><button>Med</button><button>High</button></p>
+        </div>
+        <div class=act><button id=d>Fly</button><button id=rb>Setup · F8</button></div>
+        <p id=rs>No radio found · plug it in as a USB joystick and move a stick</p>
+      </div>
+    </div>
+    <footer id=f>
+      Flight: <a href=https://github.com/hammerill/libfpv target=_blank rel=noopener>libfpv</a> + <a href=https://betaflight.com target=_blank rel=noopener>Betaflight</a> ·
+      renderer and first city from <a href=https://github.com/J-o-h-n-M/afterglow-city target=_blank rel=noopener>Afterglow City</a> ·
+      approach from <a href=https://github.com/Noniv/abyssal-garden target=_blank rel=noopener>Abyssal Garden</a> · GPL-3.0
+    </footer>
+  </aside>
+  <div id=k>
+    <p><span><kbd>W</kbd><kbd>S</kbd></span><span>Throttle</span></p>
+    <p><span><kbd>A</kbd><kbd>D</kbd></span><span>Yaw</span></p>
+    <p><span><kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></span><span>Pitch / roll</span></p>
+    <p><span><kbd>Enter</kbd></span><span>Arm</span></p>
+    <p><span><kbd>T</kbd></span><span>Turtle</span></p>
+    <p><span><kbd>V</kbd></span><span>Goggles / chase / line of sight</span></p>
+    <p><span><kbd>[</kbd><kbd>]</kbd></span><span>Camera angle</span></p>
+    <p><span><kbd>R</kbd><kbd>1</kbd>–<kbd>6</kbd></span><span>Respawn / launch spot</span></p>
+    <p><span><kbd>N</kbd><kbd>U</kbd></span><span>Time / rain</span></p>
+    <p><span><kbd>F8</kbd></span><span>Setup: radio, quad, rates, OSD</span></p>
+    <p><span><kbd>Esc</kbd></span><span>Menu</span></p>
+  </div>
+</div>
+<button id=o aria-label=Menu>≡</button>
+<p id=v></p>
+<pre id=i hidden></pre>
+<script>
+/*SCRIPT*/
+</script>
+</body>
+</html>

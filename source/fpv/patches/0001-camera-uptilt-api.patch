@@ -1,0 +1,42 @@
+diff --git a/include/libfpv.h b/include/libfpv.h
+index 576b708..a0e7dd1 100644
+--- a/include/libfpv.h
++++ b/include/libfpv.h
+@@ -771,6 +771,13 @@ enum fpv_sim_options {
+ FPV_API void fpv_sim_set_options(uint32_t options);  /* fpv_sim_options */
+ FPV_API uint32_t fpv_sim_get_options(void);
+ 
++/* The FPV camera's angle above the frame, degrees, 0..70 (the player's
++ * setting in F8 > Camera & sound, saved in settings.json). A negative value
++ * goes back to the quad preset's own angle. */
++FPV_API void fpv_camera_set_uptilt(float degrees);
++/* The angle in use: the player's, or the preset's when none is set. */
++FPV_API float fpv_camera_get_uptilt(void);
++
+ /* ===========================================================================
+  * The RC link
+  *
+diff --git a/src/api.cpp b/src/api.cpp
+index d278d28..c0b650f 100644
+--- a/src/api.cpp
++++ b/src/api.cpp
+@@ -1044,6 +1044,19 @@ FPV_API uint32_t fpv_sim_get_options(void) {
+            (L.settings.damage ? 0u : (uint32_t)FPV_SIM_NO_DAMAGE);
+ }
+ 
++FPV_API void fpv_camera_set_uptilt(float degrees) {
++    Lib &L = lib();
++    std::lock_guard<std::recursive_mutex> lock(L.mutex);
++    L.settings.cameraUptilt = degrees < 0 ? -1.0f : std::clamp(degrees, 0.0f, 70.0f);
++    if (L.initialized) saveSettings();
++}
++
++FPV_API float fpv_camera_get_uptilt(void) {
++    Lib &L = lib();
++    std::lock_guard<std::recursive_mutex> lock(L.mutex);
++    return L.settings.cameraUptilt >= 0 ? L.settings.cameraUptilt : currentPreset().camera.uptiltDeg;
++}
++
+ // --- the RC link (D36) -------------------------------------------------------------
+ 
+ FPV_API void fpv_rc_link_config_defaults(fpv_rc_link_config *c) {
