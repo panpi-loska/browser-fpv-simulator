@@ -10,9 +10,12 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // concatenation order matters: every file shares one scope
-const FILES = ['quality.js', 'math.js', 'world.js', 'cranes.js', 'quad.js', 'shaders.js', 'renderer.js', 'goggles.js', 'audio.js', 'fpv.js', 'main.js'];
+const FILES = ['quality.js', 'math.js', 'city.js', 'gen.js', 'cranes.js', 'stream.js', 'quad.js', 'shaders.js', 'renderer.js', 'goggles.js', 'audio.js', 'fpv.js', 'main.js'];
+// the city's generator also runs in workers (stream.js): these files again, as a string
+const WORKER_FILES = ['math.js', 'city.js', 'gen.js', 'cranes.js'];
 const min = process.argv.includes('--min');
 
+let workerSrc = WORKER_FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
 let js = FILES.map((f) => readFileSync(path.join(here, 'src', f), 'utf8')).join('\n');
 const tpl = readFileSync(path.join(here, 'template.html'), 'utf8');
 // everything runs inside one async function; startup errors are shown on screen
@@ -22,7 +25,13 @@ if (min) {
   const minWgsl = (s) => s.replace(/\/\/[^\n]*/g, '').replace(/\s+/g, ' ').replace(/ ?([{}()\[\];,:=+\-*\/<>&|!%@]) ?/g, '$1').trim();
   js = js.replace(/\/\*wgsl\*\/`([^`]*)`/g, (_, w) => '/*wgsl*/`' + minWgsl(w) + '`');
 }
-let code = wrap(js);
+if (min) {
+  try {
+    const { transformSync } = await import('esbuild');
+    workerSrc = transformSync(workerSrc, { minify: true, target: 'es2022', legalComments: 'none' }).code;
+  } catch { /* left as is */ }
+}
+let code = wrap(`const WORKER_SRC = ${JSON.stringify(workerSrc)};\n` + js);
 if (min) {
   try {
     const { transformSync } = await import('esbuild');

@@ -61,6 +61,22 @@ API int host_load_mesh(const float *positions, uint32_t vertex_count, const uint
     m.materials = materials;
     return (int)fpv_static_surfaces_load(&m, 1);
 }
+// one piece of the endless city: its triangles (relative to x, y, z) as a surface object that
+// stays put; created when the piece comes into range, deleted when it goes. Returns 0 on failure.
+API uint32_t host_object_create(const float *positions, uint32_t vertex_count, const uint32_t *indices,
+                                uint32_t tri_count, const uint8_t *materials, float x, float y, float z) {
+    fpv_mesh m = {0};
+    m.positions = positions;
+    m.vertex_count = vertex_count;
+    m.indices = indices;
+    m.triangle_count = tri_count;
+    m.materials = materials;
+    fpv_transform t = {{x, y, z}, {0, 0, 0, 1}, {1, 1, 1}};
+    uint32_t id = 0;
+    if (fpv_surface_object_create(&m, &t, &id) != FPV_OK) return 0;
+    return id;
+}
+API int host_object_delete(uint32_t id) { return (int)fpv_surface_object_delete(id); }
 
 // ---- the drone ----
 API int host_drone_spawn(float x, float y, float z, float qx, float qy, float qz, float qw) {

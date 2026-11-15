@@ -3,9 +3,8 @@
 // wet asphalt, water, neon, light sprites, searchlights, rain, then bloom and tone mapping.
 // ---------------------------------------------------------------------------
 
-function sceneShader(C) {
+function sceneShader() {
   const f = (x) => (+x).toFixed(4);
-  const T = C.T;
   return /*wgsl*/`
 diagnostic(off, derivative_uniformity);
 
@@ -29,18 +28,22 @@ struct Inst { m0: vec4f, m1: vec4f, m2: vec4f, col: vec4f, p: vec4f, q: vec4f };
 @group(0) @binding(3) var layoutTex: texture_2d<f32>;
 @group(0) @binding(4) var samp: sampler;
 @group(0) @binding(5) var reflTex: texture_2d<f32>;
+@group(0) @binding(6) var sampW: sampler;
+@group(0) @binding(7) var tileKey: texture_2d<i32>;
 
 const PI = 3.14159265;
-const WORLD = ${f(WORLD)};
-const RIVER_Z = ${f(RIVER.z)};
+const CHUNK = ${f(CHUNK)};
+const TILES = ${TILES};
+const SPAN = ${f(CHUNK * TILES)};
+const SPAN_PX = ${f(TILE * TILES)};
+const RIVER_Z0 = ${f(RIVER.z0)};
+const RIVER_P = ${f(RIVER.period)};
 const RIVER_HW = ${f(RIVER.hw)};
 const RAMP = ${f(RIVER.ramp)};
 const BRIDGE_H = ${f(RIVER.h)};
 const ROADY = ${f(ROADY)};
 const TRAIN_Y = ${f(TRAIN_Y)};
 const BLIMP_Y = ${f(BLIMP_Y)};
-const LAYOUT_N = ${f(LAYOUT_N)};
-const T_CX = ${f(T.cx)}; const T_CZ = ${f(T.cz)}; const T_HX = ${f(T.hx)}; const T_HZ = ${f(T.hz)}; const T_R = ${f(T.r)};
 
 // ---------- hashing and noise ----------
 fn pcg(v: u32) -> u32 {
@@ -69,45 +72,47 @@ fn rotY(v: vec3f, a: f32) -> vec3f { let c = cos(a); let s = sin(a); return vec3
 fn rotX(v: vec3f, a: f32) -> vec3f { let c = cos(a); let s = sin(a); return vec3f(v.x, c * v.y - s * v.z, s * v.y + c * v.z); }
 fn rotZ(v: vec3f, a: f32) -> vec3f { let c = cos(a); let s = sin(a); return vec3f(c * v.x - s * v.y, s * v.x + c * v.y, v.z); }
 
-// ---------- the shape of the city (same formulas as world.js) ----------
-fn riverZ(x: f32) -> f32 { return RIVER_Z + 10.0 * sin(x * 0.0023 + 0.7) + 5.0 * sin(x * 0.0061); }
-fn bridgeH(x: f32, z: f32) -> f32 {
-  let d = abs(z - riverZ(x)) - RIVER_HW; let k = clamp(1.0 - d / RAMP, 0.0, 1.0);
-  return BRIDGE_H * k * k * (3.0 - 2.0 * k);
+// ---------- the rivers (the same formulas and hash as city.js) ----------
+fn ihf(a: i32, salt: u32) -> f32 { return rnd(bitcast<u32>(a) ^ pcg(salt)); }
+struct River { on: bool, zc: f32, a1: f32, f1: f32, p1: f32, a2: f32, f2: f32, p2: f32 };
+fn riverSlot(k: i32) -> River {
+  var r: River;
+  if (k == 0) { r.on = true; r.zc = RIVER_Z0; r.a1 = 10.0; r.f1 = 0.0023; r.p1 = 0.7; r.a2 = 5.0; r.f2 = 0.0061; r.p2 = 0.0; return r; }
+  r.zc = RIVER_Z0 + f32(k) * RIVER_P + (ihf(k, 11u) - 0.5) * 800.0;
+  r.on = ihf(k, 12u) < 0.6;
+  r.a1 = 6.0 + 8.0 * ihf(k, 13u); r.f1 = 0.0014 + 0.0016 * ihf(k, 14u); r.p1 = 6.2832 * ihf(k, 15u);
+  r.a2 = 2.0 + 4.0 * ihf(k, 16u); r.f2 = 0.004 + 0.004 * ihf(k, 17u); r.p2 = 6.2832 * ihf(k, 18u);
+  return r;
 }
-fn trainPath(s0: f32) -> vec4f {
-  let a = 2.0 * (T_HX - T_R); let b = 2.0 * (T_HZ - T_R); let c = 1.5707963 * T_R;
-  let L = 2.0 * a + 2.0 * b + 4.0 * c;
-  var s = s0 - floor(s0 / L) * L;
-  let x0 = T_CX - T_HX + T_R; let x1 = T_CX + T_HX - T_R; let z0 = T_CZ - T_HZ + T_R; let z1 = T_CZ + T_HZ - T_R;
-  if (s < a) { return vec4f(x0 + s, T_CZ - T_HZ, 1.0, 0.0); } s -= a;
-  if (s < c) { let g = -1.5707963 + s / T_R; return vec4f(x1 + T_R * cos(g), z0 + T_R * sin(g), -sin(g), cos(g)); } s -= c;
-  if (s < b) { return vec4f(T_CX + T_HX, z0 + s, 0.0, 1.0); } s -= b;
-  if (s < c) { let g = s / T_R; return vec4f(x1 + T_R * cos(g), z1 + T_R * sin(g), -sin(g), cos(g)); } s -= c;
-  if (s < a) { return vec4f(x1 - s, T_CZ + T_HZ, -1.0, 0.0); } s -= a;
-  if (s < c) { let g = 1.5707963 + s / T_R; return vec4f(x0 + T_R * cos(g), z1 + T_R * sin(g), -sin(g), cos(g)); } s -= c;
-  if (s < b) { return vec4f(T_CX - T_HX, z1 - s, 0.0, -1.0); } s -= b;
-  let g = PI + s / T_R; return vec4f(x0 + T_R * cos(g), z0 + T_R * sin(g), -sin(g), cos(g));
+// how far (x, z) is from the line of the nearest river, across it
+fn riverDist(x: f32, z: f32) -> f32 {
+  let r = riverSlot(i32(floor((z - RIVER_Z0) / RIVER_P + 0.5)));
+  if (!r.on) { return 1e9; }
+  return abs(z - (r.zc + r.a1 * sin(x * r.f1 + r.p1) + r.a2 * sin(x * r.f2 + r.p2)));
+}
+fn bridgeH(x: f32, z: f32) -> f32 {
+  let d = riverDist(x, z) - RIVER_HW; let k = clamp(1.0 - d / RAMP, 0.0, 1.0);
+  return BRIDGE_H * k * k * (3.0 - 2.0 * k);
 }
 
 // ---------- animation: everything that moves is moved here, on the GPU ----------
 struct Pose { pos: vec3f, yaw: f32, pitch: f32 };
 fn carPose(q: vec4f, phase: f32, t: f32) -> Pose {
-  // q.x = axis + 2 * segment: the whole street, or only the part north / south of the river
-  let seg = floor(q.x * 0.5 + 0.01);
-  let axis = q.x - 2.0 * seg;
-  var lo = -WORLD; var hi = WORLD;
-  if (seg > 1.5) { lo = 280.0; } else if (seg > 0.5) { hi = 20.0; }
-  let L = hi - lo;
-  var s = lo + fract((phase + t * q.w) / L) * L;
-  if (q.z < 0.0) { s = lo + hi - s; }
+  // q: the road (x for a north-south one, z for east-west), the stretch [q.y, q.z] (swapped for
+  // north-south), the speed (negative: the other way); cars loop over their stretch
+  let ns = q.y > q.z;
+  let lo = min(q.y, q.z); let hi = max(q.y, q.z); let L = max(hi - lo, 1.0);
+  var s = lo + fract((phase + t * abs(q.w)) / L) * L;
+  let fw = q.w > 0.0;
+  if (!fw) { s = lo + hi - s; }
   var P: Pose;
-  if (axis < 0.5) {
-    P.pos = vec3f(s, ROADY, q.y); P.yaw = select(PI, 0.0, q.z > 0.0); P.pitch = 0.0;
+  if (!ns) {
+    P.pos = vec3f(s, ROADY, q.x); P.yaw = select(PI, 0.0, fw); P.pitch = 0.0;
   } else {
-    P.pos = vec3f(q.y, ROADY + bridgeH(q.y, s), s);
-    P.yaw = select(PI * 0.5, -PI * 0.5, q.z > 0.0);
-    P.pitch = atan(bridgeH(q.y, s + 0.5 * q.z) - bridgeH(q.y, s - 0.5 * q.z));
+    let d = select(-0.5, 0.5, fw);
+    P.pos = vec3f(q.x, ROADY + bridgeH(q.x, s), s);
+    P.yaw = select(PI * 0.5, -PI * 0.5, fw);
+    P.pitch = atan(bridgeH(q.x, s + d) - bridgeH(q.x, s - d));
   }
   return P;
 }
@@ -118,9 +123,12 @@ fn animate(I: Inst, w0: vec3f, n0: vec3f, t: f32) -> AR {
   if (a == 1u) {          // car: drives along its lane, climbs the bridges
     let P = carPose(I.q, I.p.w, t);
     r.w = P.pos + rotY(rotZ(w0, P.pitch), P.yaw); r.n = rotY(rotZ(n0, P.pitch), P.yaw);
-  } else if (a == 2u) {   // train
-    let tp = trainPath(I.q.x + t * I.q.y); let yaw = atan2(-tp.w, tp.z);
-    r.w = vec3f(tp.x, TRAIN_Y, tp.y) + rotY(w0, yaw); r.n = rotY(n0, yaw);
+  } else if (a == 2u) {   // train: runs its line from station to station (q: x, ends, speed)
+    let L = max(I.q.z - I.q.y, 1.0);
+    var s = I.q.y + fract((I.p.w + t * abs(I.q.w)) / L) * L;
+    var yaw = 0.0;
+    if (I.q.w < 0.0) { s = I.q.y + I.q.z - s; yaw = PI; }
+    r.w = vec3f(I.q.x, TRAIN_Y, s) + rotY(w0, yaw); r.n = rotY(n0, yaw);
   } else if (a == 3u) {   // ferris wheel: turns about z through its hub
     let ang = t * I.q.w;
     r.w = I.q.xyz + rotZ(w0 - I.q.xyz, ang); r.n = rotZ(n0, ang);
@@ -142,7 +150,16 @@ fn animate(I: Inst, w0: vec3f, n0: vec3f, t: f32) -> AR {
 
 // ---------- light ----------
 fn fresnel(c: f32) -> f32 { return 0.04 + 0.96 * pow(1.0 - c, 5.0); }
-fn lightAt(w: vec3f) -> vec4f { return textureSampleLevel(lightTex, samp, w.xz / (2.0 * WORLD) + 0.5, 0.0); }
+// the ground textures hold the pieces near the camera, wrapping around: is this piece's tile there?
+fn tileOK(w: vec3f) -> bool {
+  let c = vec2i(floor(w.xz / CHUNK));
+  let k = textureLoad(tileKey, ((c % TILES) + TILES) % TILES, 0).xy;
+  return all(k == c);
+}
+fn lightAt(w: vec3f) -> vec4f {
+  if (!tileOK(w)) { return vec4f(0.0, 0.0, 0.0, 1.0); }
+  return textureSampleLevel(lightTex, sampW, w.xz / SPAN, 0.0);
+}
 fn ambientL(n: vec3f, y: f32) -> vec3f {
   return u.amb.rgb * (0.65 + 0.35 * n.y) + u.glow.rgb * (0.05 * (0.5 - 0.5 * n.y) + 0.05 * exp(-max(y, 0.0) / 120.0));
 }
@@ -463,7 +480,10 @@ struct PO {
 // ---------- ground and water ----------
 struct GO { @builtin(position) pos: vec4f, @location(0) w: vec3f };
 @vertex fn vs_ground(@location(0) p: vec3f, @location(1) n: vec3f) -> GO {
-  var o: GO; o.pos = u.viewProj * vec4f(p, 1.0); o.w = p; return o;
+  // the ground and water quads move with the camera, in steps of 64 m
+  let off = floor(u.cam.xz / 64.0) * 64.0;
+  let w = p + vec3f(off.x, 0.0, off.y);
+  var o: GO; o.pos = u.viewProj * vec4f(w, 1.0); o.w = w; return o;
 }
 fn waterColor(w: vec3f, V: vec3f, fp: vec2f) -> vec3f {
   let t = u.cam.w; let p = w.xz;
@@ -483,10 +503,8 @@ fn waterColor(w: vec3f, V: vec3f, fp: vec2f) -> vec3f {
   let k = 0.3 + 0.7 * fr;
   return deep * (1.0 - k) + refl * k + u.sunCol.rgb * pow(max(dot(reflect(V, n), u.sunDir.xyz), 0.0), 300.0) * 6.0;
 }
-// past the edge of the city: dark fields and the scattered lights of the suburbs
+// far away, where the ground light isn't loaded: the city's lights as scattered dots
 fn suburbLights(w: vec3f) -> vec3f {
-  let edge = max(abs(w.x), abs(w.z)) - WORLD;
-  if (edge < 30.0) { return vec3f(0.0); }
   let dist = distance(w, u.cam.xyz);
   let r = max(0.9, dist * u.p2.x * 1.3);
   var c = vec3f(0.0);
@@ -502,18 +520,18 @@ fn suburbLights(w: vec3f) -> vec3f {
     let d = length((g2 - c2 - (vec2f(rnd(h2 ^ 1u), rnd(h2 ^ 2u)) * 0.8 + 0.1)) * 22.0);
     c += vec3f(1.0, 0.75, 0.45) * 1.3 * exp(-d * d / (r * r));
   }
-  return c * smoothstep(30.0, 250.0, edge);
+  return c * smoothstep(300.0, 900.0, distance(w.xz, u.cam.xz));
 }
 @fragment fn fs_ground(i: GO) -> @location(0) vec4f {
   let w = i.w;
-  if (abs(w.z - riverZ(w.x)) < RIVER_HW + 1.0) { discard; }
+  if (riverDist(w.x, w.z) < RIVER_HW + 1.0) { discard; }
   let V = normalize(w - u.cam.xyz);
   let n = vec3f(0.0, 1.0, 0.0);
-  let uv = w.xz / (2.0 * WORLD) + 0.5;
+  let uv = w.xz / SPAN;
   var ty = 7u; var path = 0.0; var pond = 0.0;
-  if (all(uv > vec2f(0.0)) && all(uv < vec2f(1.0))) {
-    ty = u32(textureLoad(layoutTex, vec2i(uv * LAYOUT_N), 0).r * 255.0 + 0.5);
-    let ls = textureSampleLevel(layoutTex, samp, uv, 0.0);
+  if (tileOK(w)) {
+    ty = u32(textureLoad(layoutTex, vec2i(floor(fract(uv) * SPAN_PX)), 0).r * 255.0 + 0.5);
+    let ls = textureSampleLevel(layoutTex, sampW, uv, 0.0);
     path = ls.g; pond = ls.a;
   }
   let L = lightAt(w);
@@ -541,7 +559,8 @@ struct FO { @builtin(position) pos: vec4f, @location(0) ndc: vec2f };
   var o: FO; o.pos = vec4f(p, 0.0, 1.0); o.ndc = p; return o;
 }
 @fragment fn fs_sky(i: FO) -> @location(0) vec4f {
-  let pn = u.invViewProj * vec4f(i.ndc, 1.0, 1.0);
+  // a point 300 m out (not at infinity: far from the origin that would lose the direction to rounding)
+  let pn = u.invViewProj * vec4f(i.ndc, 0.001, 1.0);
   let d = normalize(pn.xyz / pn.w - u.cam.xyz);
   var c = skyBase(d);
   if (d.y > -0.02) {

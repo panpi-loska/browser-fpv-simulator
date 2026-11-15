@@ -65,6 +65,17 @@ class FPV {
     M._free(pp); M._free(ip); M._free(mp);
     if (r !== 0) throw new Error('libfpv could not load the city: ' + M.UTF8ToString(M._host_last_error()));
   }
+  // a piece of the endless city: its triangles relative to mesh.origin, as a libfpv surface object
+  addObject(mesh) {
+    const M = this.M, { positions, indices, materials, origin } = mesh;
+    const pp = M._malloc(positions.byteLength), ip = M._malloc(indices.byteLength), mp = M._malloc(materials.byteLength);
+    M.HEAPF32.set(positions, pp >> 2); M.HEAPU32.set(indices, ip >> 2); M.HEAPU8.set(materials, mp);
+    const id = M._host_object_create(pp, positions.length / 3, ip, indices.length / 3, mp, origin[0], origin[1], origin[2]);
+    M._free(pp); M._free(ip); M._free(mp);
+    if (!id) console.error('libfpv could not take a piece of the city: ' + M.UTF8ToString(M._host_last_error()));
+    return id;
+  }
+  removeObject(id) { this.M._host_object_delete(id); }
   // creates the drone, or teleports and repairs it; rot is a quaternion [x, y, z, w]
   spawn(pos, rot) { this.M._host_drone_spawn(pos[0], pos[1], pos[2], rot[0], rot[1], rot[2], rot[3]); }
   repair() { this.M._host_drone_repair(); }

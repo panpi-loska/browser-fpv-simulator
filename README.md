@@ -1,6 +1,6 @@
 # Sodium Sky — browser FPV simulator
 
-An FPV drone simulator that runs in your browser. Fly a quad through a city at dusk with your radio, a gamepad or the keyboard.
+An FPV drone simulator that runs in your browser. Fly a quad through an endless city at dusk with your radio, a gamepad or the keyboard.
 
 The quad is flown by **real Betaflight firmware** through [libfpv](https://github.com/hammerill/libfpv), compiled to WebAssembly,
 so rates, PIDs, flight modes and the OSD work like on a real quad. The whole simulator is **one HTML file** and needs a browser
@@ -12,7 +12,10 @@ with **WebGPU** (Chrome or Edge on desktop).
 
 - Real Betaflight (2025.12) running at 1 kHz, with its CLI. Paste your quad's `diff all` to fly your own tune.
 - Several quads: 5" freestyle and racing, 7" long range, whoops and 3"–4" builds.
-- A city with collisions: buildings, bridges, a train viaduct, a ferris wheel and moving tower cranes.
+- An endless city: it is generated around you as you fly, so it never runs out, and every place is always the same.
+  Different districts give each part its own feel: downtowns with towers and searchlights, old town with narrow
+  streets and neon, docks with cranes, containers and ships, industrial zones, quiet suburbs, parks, and rivers with bridges.
+- Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.
 - Goggles view with fisheye lens and analog video breakup at long range (can be turned off).
 - Adjustable camera angle, plus chase and line-of-sight views.
@@ -48,7 +51,7 @@ The first load downloads about 0.8 MB. If the page says WebGPU is missing, updat
 | Turtle mode | `T` |
 | Change view | `V` |
 | Respawn | `R` |
-| Launch spot | `1`–`6` |
+| Launch spot | `1`–`9` |
 | Camera angle | `[` / `]` |
 | Video range real / unlimited | `L` |
 | Time of day / rain | `N` / `U` |
@@ -65,6 +68,11 @@ cd source
 node build.mjs        # writes ../index.html
 node build.mjs --min  # smaller output
 ```
+
+How the endless city works: `source/src/city.js` defines the city with formulas that hold anywhere
+(rivers, avenues, districts), `gen.js` builds one 256 m piece from them in a Web Worker, and `stream.js`
+keeps the pieces around the drone loaded (in full nearby, as a skyline farther out) and gives each nearby
+piece to libfpv as collision.
 
 The flight core (`source/fpv/fpvcore.js`) only needs rebuilding if you change libfpv or `source/fpv/host.c`.
 It needs Emscripten 4.0+:

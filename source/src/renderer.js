@@ -1,12 +1,15 @@
 // ---------------------------------------------------------------------------
-// renderer.js: WebGPU directly, no engine. One storage buffer holds every instance in the city;
-// a mirrored pass renders the reflection for the river and the wet streets; bloom, then tone mapping.
+// renderer.js: WebGPU directly, no engine. One storage buffer holds every instance in the city, a
+// region per mesh; the pieces of the city stream in and out of it (a piece's instances are appended,
+// a piece that goes away is squeezed out on the GPU). The ground light lives in textures that wrap
+// around like a window moving with the camera, one 128 px tile per piece.
+// A mirrored pass renders the reflection for the river and the wet streets; bloom, then tone mapping.
 // ---------------------------------------------------------------------------
 
 const HDR = 'rgba16float';
 const UNIFORM_FLOATS = 76;
 
-async function createRenderer(canvas, Q, world, onLost) {
+async function createRenderer(canvas, Q, base, onLost) {
   if (!navigator.gpu) throw new Error('This city needs WebGPU. Open it in a recent Chrome or Edge on a desktop computer.', { cause: 'nogpu' });
   // the previous page's GPU memory may still be going away after a reload: try a few times
   let adapter, device;
@@ -24,10 +27,10 @@ async function createRenderer(canvas, Q, world, onLost) {
   const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
 
   // ---- meshes ----
-  const rzMin = RIVER.z - 16 - RIVER.hw - 6, rzMax = RIVER.z + 16 + RIVER.hw + 6;
+  // ground and water follow the camera (vs_ground)
   const meshSrc = {
     cube: cubeMesh(), cyl: cylinderMesh(14), sphere: sphereMesh(2), cone: cylinderMesh(12, 0, true), beam: beamMesh(24),
-    ground: quadMesh(-7000, -7000, 7000, 7000, 0), water: quadMesh(-7000, rzMin, 7000, rzMax, RIVER.level),
+    ground: quadMesh(-7000, -7000, 7000, 7000, 0), water: quadMesh(-7000, -7000, 7000, 7000, RIVER.level),
   };
   const mesh = {};
   for (const [k, m] of Object.entries(meshSrc)) {
@@ -38,23 +41,102 @@ async function createRenderer(canvas, Q, world, onLost) {
     mesh[k] = { vb, ib, count: m.indices.length };
   }
 
-  // ---- all instances in one storage buffer; each draw starts at its own firstInstance ----
-  const order = ['cube', 'cyl', 'sphere', 'cone', 'beam', 'sprite'];
-  const ranges = {};
-  let total = 0;
-  for (const k of order) { ranges[k] = { first: total, count: world.groups[k].n }; total += world.groups[k].n; }
-  const instBuf = device.createBuffer({ size: Math.max(96, total * 96), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  for (const k of order) if (ranges[k].count) device.queue.writeBuffer(instBuf, ranges[k].first * 96, world.groups[k].data());
+  // ---- all instances in one storage buffer: a region per mesh, each starting with the fixed
+  // instances (the quad's model, the blimp), then the pieces of the city one after another ----
+  const order = GROUPS;
+  const IB = 96;
+  const reg = {};
+  let caps = { ...Q.caps }, instBuf = null, scratch = null, bindDirty = true;
+  for (const k of order) {
+    const n = base.groups[k].n;
+    caps[k] = Math.max(caps[k], n + 1024);
+    reg[k] = { first: 0, cap: caps[k], fixed: n, entries: [], used: 0 };
+  }
+  function layoutRegions() { let off = 0; for (const k of order) { reg[k].first = off; off += reg[k].cap; } return off; }
+  function allocate() {
+    const total = layoutRegions();
+    const old = instBuf, oldReg = instBuf ? JSON.parse(JSON.stringify(Object.fromEntries(order.map((k) => [k, { first: reg[k].oldFirst ?? reg[k].first }])))) : null;
+    instBuf = device.createBuffer({ size: total * IB, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    scratch?.destroy();
+    scratch = device.createBuffer({ size: Math.max(...order.map((k) => reg[k].cap)) * IB, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    if (old) {
+      const enc = device.createCommandEncoder();
+      for (const k of order) { const n = reg[k].fixed + reg[k].used; if (n) enc.copyBufferToBuffer(old, oldReg[k].first * IB, instBuf, reg[k].first * IB, n * IB); }
+      device.queue.submit([enc.finish()]);
+      old.destroy();
+    }
+    for (const k of order) reg[k].oldFirst = reg[k].first;
+    bindDirty = true;
+  }
+  allocate();
+  for (const k of order) if (reg[k].fixed) device.queue.writeBuffer(instBuf, reg[k].first * IB, base.groups[k].data());
 
-  // ---- ground textures ----
-  const tex2d = (n, data) => {
-    const t = device.createTexture({ size: [n, n], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-    device.queue.writeTexture({ texture: t }, data, { bytesPerRow: n * 4 }, [n, n]);
-    return t;
-  };
-  const lightTex = tex2d(LIGHT_N, world.lightTex), layoutTex = tex2d(LAYOUT_N, world.layout);
+  // pieces come and go: removals are squeezed out first (on the GPU), then the new pieces written
+  const pendingAdd = [], pendingDel = new Set();
+  function chunkAdd(key, groups) { pendingAdd.push({ key, groups }); }
+  function chunkRemove(key) {
+    const i = pendingAdd.findIndex((p) => p.key === key);
+    if (i >= 0) { pendingAdd.splice(i, 1); return; }
+    pendingDel.add(key);
+  }
+  function flush() {
+    if (pendingDel.size) {
+      const enc = device.createCommandEncoder();
+      for (const k of order) {
+        const r = reg[k];
+        const first = r.entries.findIndex((e) => pendingDel.has(e.key));
+        if (first < 0) continue;
+        const start = r.entries[first].first;
+        const kept = r.entries.filter((e) => !pendingDel.has(e.key));
+        let at = start, moved = 0;
+        for (const e of kept) {
+          if (e.first < start) continue;
+          if (e.count) enc.copyBufferToBuffer(instBuf, (r.first + r.fixed + e.first) * IB, scratch, moved * IB, e.count * IB);
+          e.first = at; at += e.count; moved += e.count;
+        }
+        if (moved) enc.copyBufferToBuffer(scratch, 0, instBuf, (r.first + r.fixed + start) * IB, moved * IB);
+        r.entries = kept; r.used = at;
+      }
+      device.queue.submit([enc.finish()]);
+      pendingDel.clear();
+    }
+    if (pendingAdd.length) {
+      // grow a region that would overflow (doubling), then write
+      let grow = false;
+      for (const k of order) {
+        const need = reg[k].fixed + reg[k].used + pendingAdd.reduce((n, p) => n + p.groups[k].length / 24, 0);
+        if (need > reg[k].cap) { while (reg[k].cap < need) reg[k].cap *= 2; grow = true; }
+      }
+      if (grow) allocate();
+      for (const p of pendingAdd)
+        for (const k of order) {
+          const d = p.groups[k], n = d.length / 24, r = reg[k];
+          r.entries.push({ key: p.key, first: r.used, count: n });
+          if (n) device.queue.writeBuffer(instBuf, (r.first + r.fixed + r.used) * IB, d);
+          r.used += n;
+        }
+      pendingAdd.length = 0;
+    }
+  }
+
+  // ---- ground textures: a window of TILES x TILES pieces, wrapping around; tileKey says which piece each tile holds ----
+  const SPAN_PX = TILE * TILES;
+  const tex2d = (n) => device.createTexture({ size: [n, n], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+  const lightTex = tex2d(SPAN_PX), layoutTex = tex2d(SPAN_PX);
+  const keyTex = device.createTexture({ size: [TILES, TILES], format: 'rg32sint', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+  const NOKEY = new Int32Array([0x7fffffff, 0x7fffffff]);
+  for (let y = 0; y < TILES; y++) for (let x = 0; x < TILES; x++) device.queue.writeTexture({ texture: keyTex, origin: [x, y] }, NOKEY, { bytesPerRow: 8 }, [1, 1]);
+  const tileOf = (c) => ((c % TILES) + TILES) % TILES;
+  function writeTile(cx, cz, light, layout) {
+    const ox = tileOf(cx) * TILE, oz = tileOf(cz) * TILE;
+    device.queue.writeTexture({ texture: lightTex, origin: [ox, oz] }, light, { bytesPerRow: TILE * 4 }, [TILE, TILE]);
+    device.queue.writeTexture({ texture: layoutTex, origin: [ox, oz] }, layout, { bytesPerRow: TILE * 4 }, [TILE, TILE]);
+    device.queue.writeTexture({ texture: keyTex, origin: [tileOf(cx), tileOf(cz)] }, new Int32Array([cx, cz]), { bytesPerRow: 8 }, [1, 1]);
+  }
+  function clearTile(cx, cz) { device.queue.writeTexture({ texture: keyTex, origin: [tileOf(cx), tileOf(cz)] }, NOKEY, { bytesPerRow: 8 }, [1, 1]); }
   const dummy = device.createTexture({ size: [1, 1], format: HDR, usage: GPUTextureUsage.TEXTURE_BINDING });
   const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
+  const samplerWrap = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'repeat' });
 
   // ---- shaders and pipelines ----
   const compile = async (code, label) => {
@@ -65,7 +147,7 @@ async function createRenderer(canvas, Q, world, onLost) {
     if (errs.length) throw new Error(`Shader error in ${label}: ${errs[0].message} (line ${errs[0].lineNum})`);
     return m;
   };
-  const sceneMod = await compile(sceneShader(world.consts), 'scene');
+  const sceneMod = await compile(sceneShader(), 'scene');
   const postMod = await compile(POST_WGSL, 'post');
 
   const bgl = device.createBindGroupLayout({
@@ -76,6 +158,8 @@ async function createRenderer(canvas, Q, world, onLost) {
       { binding: 3, visibility: VF, texture: { sampleType: 'float' } },
       { binding: 4, visibility: VF, sampler: { type: 'filtering' } },
       { binding: 5, visibility: VF, texture: { sampleType: 'float' } },
+      { binding: 6, visibility: VF, sampler: { type: 'filtering' } },
+      { binding: 7, visibility: VF, texture: { sampleType: 'sint' } },
     ],
   });
   const layout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
@@ -131,9 +215,10 @@ async function createRenderer(canvas, Q, world, onLost) {
       { binding: 0, resource: { buffer: ub } }, { binding: 1, resource: { buffer: instBuf } },
       { binding: 2, resource: lightTex.createView() }, { binding: 3, resource: layoutTex.createView() },
       { binding: 4, resource: sampler }, { binding: 5, resource: refl.createView() },
+      { binding: 6, resource: samplerWrap }, { binding: 7, resource: keyTex.createView() },
     ],
   });
-  const bgRefl = sceneBG(uRefl, dummy);
+  let bgRefl = null;
 
   // ---- render targets, rebuilt when the size changes ----
   let RT = null;
@@ -189,17 +274,19 @@ async function createRenderer(canvas, Q, world, onLost) {
     d.set([...right, 0], 68); d.set([...up, 0], 72);
   }
 
+  const count = (k) => reg[k].fixed + reg[k].used;
   const drawProps = (pass) => {
     for (const k of ['cube', 'cyl', 'sphere', 'cone']) {
-      const r = ranges[k];
-      if (!r.count) continue;
+      if (!count(k)) continue;
       pass.setVertexBuffer(0, mesh[k].vb); pass.setIndexBuffer(mesh[k].ib, 'uint32');
-      pass.drawIndexed(mesh[k].count, r.count, 0, 0, r.first);
+      pass.drawIndexed(mesh[k].count, count(k), 0, 0, reg[k].first);
     }
   };
   const drawQuad = (pass, pl, m) => { pass.setPipeline(pl); pass.setVertexBuffer(0, mesh[m].vb); pass.setIndexBuffer(mesh[m].ib, 'uint32'); pass.drawIndexed(mesh[m].count); };
 
   function render(view, env, t) {
+    flush();
+    if (bindDirty) { bgRefl = sceneBG(uRefl, dummy); RT.bgMain = sceneBG(uMain, RT.refl || dummy); bindDirty = false; }
     const { w, h } = RT;
     const proj = perspectiveRevInf(view.fov, w / h, view.near || 0.3);
     // an FPV camera hands over its full basis (it can roll); otherwise build one from yaw and pitch
@@ -227,7 +314,7 @@ async function createRenderer(canvas, Q, world, onLost) {
       pass.setPipeline(PR.sky); pass.draw(3);
       drawQuad(pass, PR.ground, 'ground');
       pass.setPipeline(PR.props); drawProps(pass);
-      pass.setPipeline(PR.sprite); pass.draw(4, ranges.sprite.count, 0, ranges.sprite.first);
+      pass.setPipeline(PR.sprite); pass.draw(4, count('sprite'), 0, reg.sprite.first);
       pass.end();
     }
     {
@@ -243,10 +330,10 @@ async function createRenderer(canvas, Q, world, onLost) {
       drawQuad(pass, P.ground, 'ground');
       pass.setPipeline(P.props); drawProps(pass);
       drawQuad(pass, P.water, 'water');
-      pass.setPipeline(P.sprite); pass.draw(4, ranges.sprite.count, 0, ranges.sprite.first);
-      if (ranges.beam.count && env.beams > 0.01) {
+      pass.setPipeline(P.sprite); pass.draw(4, count('sprite'), 0, reg.sprite.first);
+      if (count('beam') && env.beams > 0.01) {
         pass.setPipeline(P.beam); pass.setVertexBuffer(0, mesh.beam.vb); pass.setIndexBuffer(mesh.beam.ib, 'uint32');
-        pass.drawIndexed(mesh.beam.count, ranges.beam.count, 0, 0, ranges.beam.first);
+        pass.drawIndexed(mesh.beam.count, count('beam'), 0, 0, reg.beam.first);
       }
       if (env.rain > 0.01) { pass.setPipeline(P.rain); pass.draw(4, Q.rainDrops); }
       pass.end();
@@ -266,13 +353,14 @@ async function createRenderer(canvas, Q, world, onLost) {
   const instScratch = new Float32Array(24);
   function setInstance(group, index, m, col, p, q = [0, 0, 0, 0]) {
     instScratch.set(m, 0); instScratch.set(col, 12); instScratch.set(p, 16); instScratch.set(q, 20);
-    device.queue.writeBuffer(instBuf, (ranges[group].first + index) * 96, instScratch);
+    device.queue.writeBuffer(instBuf, (reg[group].first + index) * IB, instScratch);
   }
 
   return {
-    device, format, ctx, resize, render, setInstance,
+    device, format, ctx, resize, render, setInstance, chunkAdd, chunkRemove, writeTile, clearTile,
     get ldr() { return RT.ldr; },
-    instances: total, sprites: ranges.sprite.count,
+    get instances() { return order.reduce((n, k) => n + count(k), 0); },
+    get sprites() { return count('sprite'); },
     get size() { return RT ? [RT.w, RT.h] : [0, 0]; },
     destroy() { destroyed = true; device.destroy(); },
   };

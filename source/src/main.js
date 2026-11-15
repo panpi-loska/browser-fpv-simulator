@@ -58,12 +58,12 @@ function stepEnv(dt) {
   env.wet = clamp(env.wet + (raining ? dt * 0.12 : -dt * 0.03), 0, 1);
 }
 
-// ---- build the city, then start Betaflight and hand it the city ----
+// ---- the renderer, Betaflight, then the city around the launch spot ----
 const progress = (f, label) => { $('b').style.transform = `scaleX(${f})`; if (label) $('s').textContent = label + '…'; };
-const world = await buildWorld(Q, progress);
-const droneModel = addDroneModel(world.groups);
-progress(0.92, 'Compiling shaders');
-const R = await createRenderer(canvas, Q, world, (info) => {
+progress(0.05, 'Compiling shaders');
+const base = baseGroups(Q);
+const droneModel = addDroneModel(base);
+const R = await createRenderer(canvas, Q, { groups: base }, (info) => {
   console.error('GPU device lost:', info.message);
   const p = loadPrefs(), i = LEVEL_ORDER.indexOf(level);
   if (i > 0) p.level = LEVEL_ORDER[i - 1];
@@ -71,11 +71,20 @@ const R = await createRenderer(canvas, Q, world, (info) => {
   setTimeout(reloadClean, 400);
 });
 const goggles = createGoggles(R.device, R.format, R.ctx, uiCanvas);
-progress(0.96, 'Booting Betaflight');
+progress(0.3, 'Booting Betaflight');
 const core = await FPV.load(BUILD, location.hash.includes('noautopause'));
+// the city collides piece by piece (stream.js); under it all, a floor far below the streets
+core.loadWorld(new Float32Array([-2e5, -3.3, -2e5, -2e5, -3.3, 2e5, 2e5, -3.3, 2e5, 2e5, -3.3, -2e5]), new Uint32Array([0, 1, 2, 0, 2, 3]), new Uint8Array([0, 0]));
+const city = createStreamer(Q, R, core);
+const spots = launchSpots();
+let spot = clamp(prefs.spot | 0, 0, spots.length - 1);
 {
-  const m = buildCollisionMesh(world);
-  core.loadWorld(m.positions, m.indices, m.materials);
+  const [x, , z] = spots[spot].pos;
+  while (!city.ready(x, z)) {
+    city.update(x, z, 0.05, 40);
+    progress(0.4 + 0.6 * city.progressNear(x, z, 500), 'Raising the city');
+    await new Promise((r) => setTimeout(r, 15));
+  }
 }
 progress(1, 'Ready');
 const audio = new Soundscape();
@@ -108,43 +117,54 @@ function applySize() {
 applySize();
 addEventListener('resize', applySize);
 
+let entered = false, playing = false, showStats = false;
+
 // ---- launch spots: on the street, a roof or a bridge deck, facing the view ----
 // a viewpoint high in the air launches from the highest roof within 90 m below it
 function launchPoint(p) {
-  const ground = supportY(world, p[0], p[2], p[1] + 0.5);
+  const ground = city.supportY(p[0], p[2], p[1] + 0.5);
   if (p[1] - ground < 30) return [p[0], ground, p[2]];
-  const { boxes, grid, CELL } = world.collide;
   let best = null;
-  for (let gx = Math.floor((p[0] - 90) / CELL); gx <= Math.floor((p[0] + 90) / CELL); gx++)
-    for (let gz = Math.floor((p[2] - 90) / CELL); gz <= Math.floor((p[2] + 90) / CELL); gz++)
-      for (const i of grid.get(gx * 100003 + gz) || []) {
-        const o = i * 6, top = boxes[o + 4];
-        if (top > p[1] || boxes[o + 3] - boxes[o] < 12 || boxes[o + 5] - boxes[o + 2] < 12) continue;
-        const cx = (boxes[o] + boxes[o + 3]) / 2, cz = (boxes[o + 2] + boxes[o + 5]) / 2;
-        if (Math.hypot(cx - p[0], cz - p[2]) > 90) continue;
-        if (!best || top > best[1]) best = [cx, top, cz];
-      }
+  city.eachBoxNear(p[0], p[2], 90, (b, o) => {
+    const top = b[o + 4];
+    if (top > p[1] || b[o + 3] - b[o] < 12 || b[o + 5] - b[o + 2] < 12) return;
+    const cx = (b[o] + b[o + 3]) / 2, cz = (b[o + 2] + b[o + 5]) / 2;
+    if (Math.hypot(cx - p[0], cz - p[2]) > 90) return;
+    if (!best || top > best[1]) best = [cx, top, cz];
+  });
   // the roof's highest point at its centre (setback towers have smaller tiers on top)
-  return best ? [best[0], supportY(world, best[0], best[2], best[1] + 0.5), best[2]] : [p[0], ground, p[2]];
+  return best ? [best[0], city.supportY(best[0], best[2], best[1] + 0.5), best[2]] : [p[0], ground, p[2]];
 }
-const spots = world.views;
 let pilotHome = [0, 0, 0];
-let spot = clamp(prefs.spot | 0, 0, spots.length - 1);
+// a launch waits until the city around it is in (a far spot takes a moment)
+let pendingSpot = null;
 function goSpot(i, announce) {
   spot = (i + spots.length) % spots.length;
-  const s = spots[spot], yaw = Math.atan2(s.at[0] - s.pos[0], -(s.at[2] - s.pos[2]));
-  const [x, y, z] = launchPoint(s.pos);
+  $('spn').textContent = spots[spot].name;
+  const p = loadPrefs(); p.spot = spot; savePrefs(p);
+  pendingSpot = { announce };
+  if (playing) core.setPaused(true);
+}
+function spawnAtSpot() {
+  const s = spots[spot];
+  let pos = s.pos, at = s.at;
+  const m = s.mark && city.findMark(s.mark, pos[0], pos[2]);
+  if (m && s.mark === 'crane') pos = [m.x, m.y + 1.6, m.z];
+  if (m && s.mark === 'wheel') { pos = [m.x + 70, 26, m.z - 25]; at = [m.x, 36, m.z]; }
+  const yaw = Math.atan2(at[0] - pos[0], -(at[2] - pos[2]));
+  const [x, y, z] = launchPoint(pos);
   core.spawn([x, y, z], [0, Math.sin(-yaw / 2), 0, Math.cos(-yaw / 2)]);
   // the pilot stands a few metres behind the quad and a little to the side
   const fx = Math.sin(yaw), fz = -Math.cos(yaw), px = x - fx * 4 - fz * 1.5, pz = z - fz * 4 + fx * 1.5;
   // (up on a crane or a mast there's nothing to stand on behind it: the pilot stays at the quad's height)
-  pilotHome = [px, Math.max(y, supportY(world, px, pz, y + 2)), pz];
+  pilotHome = [px, Math.max(y, city.supportY(px, pz, y + 2)), pz];
   core.setPilot(pilotHome);
-  $('spn').textContent = s.name;
-  const p = loadPrefs(); p.spot = spot; savePrefs(p);
-  if (announce) toast(s.name);
+  if (pendingSpot.announce) toast(s.name);
+  pendingSpot = null;
+  if (playing) core.setPaused(false);
 }
 goSpot(spot);
+spawnAtSpot();
 $('spl').onclick = () => goSpot(spot - 1);
 $('spr').onclick = () => goSpot(spot + 1);
 core.setAction(1, 'Next launch spot');
@@ -155,8 +175,10 @@ const VIEWS = ['FPV', 'Chase', 'Line of sight'];
 let viewMode = 0;
 core.setView(0);
 const view = { pos: [0, 200, 900], yaw: 0, pitch: -0.2, fov: 1.05, basis: null, near: 0.3 };
+// in the menu the view circles the chosen launch spot
+function orbitTarget() { const s = spots[spot]; return [(s.pos[0] + s.at[0]) / 2, 60, (s.pos[2] + s.at[2]) / 2]; }
 function orbit(t) {
-  const a = 0.5 + t * 0.016, pos = [150 + 980 * Math.cos(a), 250 + 50 * Math.sin(t * 0.05), -300 + 980 * Math.sin(a)], at = [150, 70, -330];
+  const at = orbitTarget(), a = 0.5 + t * 0.016, pos = [at[0] + 760 * Math.cos(a), 230 + 50 * Math.sin(t * 0.05), at[2] + 760 * Math.sin(a)];
   const d = [at[0] - pos[0], at[1] - pos[1], at[2] - pos[2]];
   Object.assign(view, { pos, yaw: Math.atan2(d[0], -d[2]), pitch: Math.atan2(d[1], Math.hypot(d[0], d[2])), fov: 1.05, basis: null, near: 0.3 });
 }
@@ -169,7 +191,6 @@ function applyWind() { if (raining) core.wind(7.5, 2.5); else core.wind(2.8, 0.9
 applyWind();
 
 // ---- menu and keys ----
-let entered = false, playing = false, showStats = false;
 function toast(msg) {
   const v = $('v');
   v.textContent = msg; v.classList.add('on');
@@ -250,8 +271,8 @@ addEventListener('keydown', (e) => {
   // the settings key (F8, or whatever it was rebound to) toggles them inside libfpv
   if (core.overlayIsOpen) { overlayAsked = true; for (const k of held) core.key(k, false); held.clear(); return; }
   if (e.repeat) return;
-  const n = /^Digit([1-6])$/.exec(e.code);
-  if (n) goSpot(+n[1] - 1, true);
+  const n = /^Digit([1-9])$/.exec(e.code);
+  if (n && +n[1] <= spots.length) goSpot(+n[1] - 1, true);
   if (e.code === 'KeyR') { goSpot(spot); toast('Respawned'); }
   if (e.code === 'KeyV') { viewMode = (viewMode + 1) % 3; core.setView(viewMode); toast(VIEWS[viewMode]); }
   if (e.code === 'KeyM') { setSound(!soundOn); toast(soundOn ? 'Sound on' : 'Sound off'); }
@@ -287,7 +308,7 @@ function menuStatus() {
 }
 
 // for poking at the sim from the developer console
-window.__fpv = { core, view, world, R, goggles, get frame() { return core.frame; } };
+window.__fpv = { core, view, city, R, goggles, spots, get frame() { return core.frame; }, get launching() { return !!pendingSpot; } };
 
 // ---- the loop ----
 setState('m');
@@ -298,6 +319,14 @@ function frame(now) {
   last = now;
   const t = (now - t0) / 1000;
   let f = null;
+  // the city follows the quad (or, before a launch, the spot it is going to)
+  {
+    const fr = core.frame, s = spots[spot].pos;
+    const c = pendingSpot ? s : entered && fr ? fr.pos : orbitTarget();
+    city.update(c[0], c[2], dt);
+    if (pendingSpot && city.ready(s[0], s[2])) spawnAtSpot();
+    else if (pendingSpot && playing) toast('Loading ' + spots[spot].name + '…');
+  }
   if (!entered) orbit(t);
   else {
     // libfpv steps Betaflight and the physics at 1 kHz in real time inside tick (paused in the menu)
@@ -347,12 +376,12 @@ function frame(now) {
   }
   statT += dt; statN++;
   if (showStats && statT > 0.5) {
-    const [w, h] = R.size;
+    const [w, h] = R.size, cs = city.stats();
     let s = `${Math.round(statN / statT)} fps  ${((statT / statN) * 1000).toFixed(1)} ms\n${w}×${h} (${Math.round(scale * 100)}%)  ${Q.name}\n`
-      + `${world.stats.buildings} buildings  ${world.stats.cars} cars  ${R.instances} instances\nlibfpv ${core.version}`;
+      + `${cs.full} pieces near, ${cs.lite} far, ${cs.pending} coming  ${R.instances} instances\nlibfpv ${core.version}`;
     if (f) {
       const st = core.inputStatus();
-      s += `\nx ${f.pos[0].toFixed(0)}  y ${f.pos[1].toFixed(1)}  z ${f.pos[2].toFixed(0)}  ${f.speedKmh.toFixed(0)} km/h\n`
+      s += `\nx ${f.pos[0].toFixed(0)}  y ${f.pos[1].toFixed(1)}  z ${f.pos[2].toFixed(0)}  ${f.speedKmh.toFixed(0)} km/h  ${DISTRICTS[superblockAt(f.pos[0], f.pos[2]).kind].label}\n`
         + `${st.source}${st.name ? ' ' + st.name : ''}  ${f.armed ? 'ARMED' : core.armingText() || 'disarmed'}\n`
         + `video ${f.video.cnr.toFixed(1)} dB CNR  ${f.video.rssi.toFixed(0)} dBm  wind ${Math.hypot(...f.wind).toFixed(1)} m/s`;
     }
