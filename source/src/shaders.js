@@ -278,9 +278,10 @@ fn shadeBuilding(I: Inst, w: vec3f, n: vec3f, lp: vec3f, V: vec3f) -> vec3f {
     let r = mix(vec3f(0.05, 0.05, 0.055), wall * 0.6 + 0.03, step(0.0, rim)) * (0.75 + 0.5 * vnoise(w.xz * 0.4));
     return r * light;
   }
+  // which wall, in the building's own frame (it may be turned to its street)
   var uC: f32; var width: f32; var T: vec3f; var face: u32;
-  if (abs(n.x) > 0.5) { uC = (lp.z + 0.5) * size.z; width = size.z; T = vec3f(0.0, 0.0, 1.0); face = select(1u, 0u, n.x > 0.0); }
-  else { uC = (lp.x + 0.5) * size.x; width = size.x; T = vec3f(1.0, 0.0, 0.0); face = select(3u, 2u, n.z > 0.0); }
+  if (abs(lp.x) >= abs(lp.z)) { uC = (lp.z + 0.5) * size.z; width = size.z; T = normalize(vec3f(I.m0.z, I.m1.z, I.m2.z)); face = select(1u, 0u, lp.x > 0.0); }
+  else { uC = (lp.x + 0.5) * size.x; width = size.x; T = normalize(vec3f(I.m0.x, I.m1.x, I.m2.x)); face = select(3u, 2u, lp.z > 0.0); }
   let style = u32(I.q.x + 0.5);
   let fh = I.q.y;
   let cw = width / max(1.0, round(width / I.q.z));
@@ -347,15 +348,18 @@ fn shadeBuilding(I: Inst, w: vec3f, n: vec3f, lp: vec3f, V: vec3f) -> vec3f {
   return c;
 }
 
-fn shadeRoad(I: Inst, w: vec3f, n: vec3f, fp: vec2f, V: vec3f) -> vec3f {
+fn shadeRoad(I: Inst, w: vec3f, n: vec3f, lp: vec3f, fp: vec2f, V: vec3f) -> vec3f {
   let L = lightAt(w);
   if (n.y < 0.5) { return vec3f(0.12, 0.115, 0.11) * (ambientL(n, w.y) + sunL(n) + streetL(w, n)); }
   var alb = vec3f(0.032, 0.033, 0.037) * (0.75 + 0.5 * fbm(w.xz * 0.12));
   var mark = 0.0; var yel = 0.0;
-  let cx = I.m0.w; let cz = I.m2.w;
+  let size = instSize(I);
+  // q: axis (the local axis the road runs along), width, lanes, mode (0 a road, 1 a crossing, 2 plain)
   if (I.q.w < 0.5) {
-    var along = w.x; var across = w.z - cz;
-    if (I.q.x > 0.5) { along = w.z; across = w.x - cx; }
+    // along: the distance along the road's direction (continuous over pieces in a line); across: local
+    var dir = normalize(vec3f(I.m0.x, I.m1.x, I.m2.x)); var across = lp.z * size.z;
+    if (I.q.x > 0.5) { dir = normalize(vec3f(I.m0.z, I.m1.z, I.m2.z)); across = lp.x * size.x; }
+    let along = dot(w, dir);
     let fa = fwidth(across); let fl = fwidth(along);
     let half = I.q.y * 0.5; let a = abs(across);
     let dash = (1.0 - smoothstep(0.0, 1.0, fl * 0.3));
@@ -366,8 +370,8 @@ fn shadeRoad(I: Inst, w: vec3f, n: vec3f, fp: vec2f, V: vec3f) -> vec3f {
       yel = band(a, 0.09, fa) * mix(0.5, step(fract(along / 9.0), 0.5), dash);
     }
     mark = max(mark, band(abs(a - (half - 0.55)), 0.08, fa));
-  } else {
-    let lx = w.x - cx; let lz = w.z - cz;
+  } else if (I.q.w < 1.5) {
+    let lx = lp.x * size.x; let lz = lp.z * size.z;
     let inX = I.q.y * 0.5 - abs(lx); let inZ = I.q.z * 0.5 - abs(lz);
     let fs = max(fwidth(lx), fwidth(lz));
     let st = mix(0.5, 1.0, 1.0 - smoothstep(0.2, 0.6, fs));
@@ -479,7 +483,7 @@ struct PO {
   switch u32(I.p.x + 0.5) {
     case 1u: { col = shadeBuilding(I, i.w, n, i.lp, V); }
     case 2u: { col = I.col.rgb * I.col.a * i.em; }
-    case 3u: { col = shadeRoad(I, i.w, n, i.pos.xy, V); }
+    case 3u: { col = shadeRoad(I, i.w, n, i.lp, i.pos.xy, V); }
     case 4u: { col = shadeSidewalk(i.w, n, i.pos.xy, V); }
     case 5u: {
       let alb = I.col.rgb * (0.55 + 0.8 * vnoise(i.w.xz * 0.8 + vec2f(i.w.y * 0.7)));
@@ -498,8 +502,8 @@ struct PO {
 // ---------- ground and water ----------
 struct GO { @builtin(position) pos: vec4f, @location(0) w: vec3f };
 @vertex fn vs_ground(@location(0) p: vec3f, @location(1) n: vec3f) -> GO {
-  // the ground and water quads move with the camera, in steps of 64 m
-  let off = floor(u.cam.xz / 64.0) * 64.0;
+  // the ground and water grids move with the camera, a cell at a time
+  let off = floor(u.cam.xz / 128.0) * 128.0;
   let w = p + vec3f(off.x, 0.0, off.y);
   var o: GO; o.pos = u.viewProj * vec4f(w, 1.0); o.w = w; return o;
 }
@@ -560,8 +564,14 @@ fn suburbLights(w: vec3f) -> vec3f {
     alb = vec3f(0.11, 0.1, 0.095) * mix(0.7, 1.0, smoothstep(0.0, 0.05, e));
   }
   else if (ty == 7u) { alb = vec3f(0.02, 0.022, 0.02) * (0.6 + 0.8 * fbm(w.xz * 0.01)); }
+  else if (ty == 8u) {   // paving: the pavements round a block
+    let g = fract(w.xz / 1.5); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
+    let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 1.5);
+    alb = vec3f(0.1, 0.098, 0.094) * mix(1.0, mix(0.6, 1.0, smoothstep(0.0, 0.05, e)) * (0.8 + 0.4 * h21(floor(w.xz / 1.5))), seams);
+  }
   else { alb = vec3f(0.05, 0.045, 0.04) * (0.7 + 0.6 * fbm(w.xz * 0.2)); }
   var c = alb * (ambientL(n, 0.0) + sunL(n) + L.rgb * 4.0) * mix(0.4, 1.0, L.a);
+  if (ty == 8u) { c += reflSample(i.pos.xy, V, n, w, 1.0) * (0.05 + 0.6 * fresnel(clamp(-dot(V, n), 0.0, 1.0))) * u.p2.y * 0.6; }
   if (pond > 0.01) { c = mix(c, waterColor(w, V, i.pos.xy), pond); }
   if (ty == 7u) { c += suburbLights(w); }
   return vec4f(applyFog(c, w), 1.0);

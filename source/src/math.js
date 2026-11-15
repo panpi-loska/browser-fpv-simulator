@@ -194,6 +194,19 @@ function beamMesh(seg = 20) {
   }
   return m.done();
 }
+// a flat grid of cell-metre squares out to +-inner, then a ring of big squares out to +-outer: one huge
+// quad would lose depth precision with the camera half a metre above it (it then hides the streets)
+function gridMesh(inner, cell, outer, y) {
+  const m = meshBuilder(), n = [0, 1, 0], N = Math.round((2 * inner) / cell);
+  const sq = (x0, z0, x1, z1) => {
+    const a = m.vert([x0, y, z0], n), b = m.vert([x1, y, z0], n), c = m.vert([x1, y, z1], n), d = m.vert([x0, y, z1], n);
+    m.tri(a, b, c); m.tri(a, c, d);
+  };
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) sq(-inner + i * cell, -inner + j * cell, -inner + (i + 1) * cell, -inner + (j + 1) * cell);
+  sq(-outer, -outer, outer, -inner); sq(-outer, inner, outer, outer);
+  sq(-outer, -inner, -inner, inner); sq(inner, -inner, outer, inner);
+  return m.done();
+}
 function quadMesh(x0, z0, x1, z1, y) {
   const m = meshBuilder(), n = [0, 1, 0];
   const a = m.vert([x0, y, z0], n), b = m.vert([x1, y, z0], n), c = m.vert([x1, y, z1], n), d = m.vert([x0, y, z1], n);

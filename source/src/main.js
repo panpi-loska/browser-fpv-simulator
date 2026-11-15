@@ -126,10 +126,10 @@ function launchPoint(p) {
   if (p[1] - ground < 30) return [p[0], ground, p[2]];
   let best = null;
   city.eachBoxNear(p[0], p[2], 90, (b, o) => {
-    const top = b[o + 4];
-    if (top > p[1] || b[o + 3] - b[o] < 12 || b[o + 5] - b[o + 2] < 12) return;
+    const top = b[o + 7];
+    if (top > p[1] || b[o + 2] < 6 || b[o + 3] < 6) return;
     // a quarter of the way out from the centre of the roof, where a spire or a tank may stand
-    const cx = b[o] + (b[o + 3] - b[o]) * 0.75, cz = b[o + 2] + (b[o + 5] - b[o + 2]) * 0.75;
+    const [cx, cz] = boxWorld(b, o, b[o + 2] * 0.5, b[o + 3] * 0.5);
     if (Math.hypot(cx - p[0], cz - p[2]) > 90) return;
     if (!best || top > best[1]) best = [cx, top, cz];
   });

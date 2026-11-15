@@ -30,7 +30,7 @@ async function createRenderer(canvas, Q, base, onLost) {
   // ground and water follow the camera (vs_ground)
   const meshSrc = {
     cube: cubeMesh(), cyl: cylinderMesh(14), sphere: sphereMesh(2), cone: cylinderMesh(12, 0, true), beam: beamMesh(24),
-    ground: quadMesh(-7000, -7000, 7000, 7000, 0), water: quadMesh(-7000, -7000, 7000, 7000, RIVER.level),
+    ground: gridMesh(3072, 128, 7000, 0), water: gridMesh(3072, 128, 7000, RIVER.level),
   };
   const mesh = {};
   for (const [k, m] of Object.entries(meshSrc)) {

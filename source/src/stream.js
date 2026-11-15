@@ -159,16 +159,21 @@ function createStreamer(Q, R, core) {
       if (s.lod) chunkRaster(out);
       results.push({ id: s.id, out });
     }
-    while (results.length && performance.now() - t0 < budgetMs) {
+    // finished pieces first (at least one a frame), then the ground under them, nearest first
+    // (at least one a frame too, so a busy stream of pieces never leaves the ground unlit)
+    for (let n = 0; results.length && (n === 0 || performance.now() - t0 < budgetMs * 0.6); n++) {
       const { id, out } = results.shift();
       inflight.delete(id);
       apply(out);
     }
-    for (const k of dirty) {
-      if (performance.now() - t0 > budgetMs + 2) break;
-      dirty.delete(k);
-      const c = chunks.get(k);
-      if (c && c.lod === 1) composeTile(c);
+    if (dirty.size) {
+      const ccx = center[0] / CHUNK - 0.5, ccz = center[1] / CHUNK - 0.5;
+      const order = [...dirty].map((k) => { const c = chunks.get(k); return { k, c, d: c ? (c.cx - ccx) ** 2 + (c.cz - ccz) ** 2 : 0 }; }).sort((a, b) => a.d - b.d);
+      for (let n = 0; n < order.length && (n === 0 || performance.now() - t0 < budgetMs); n++) {
+        const { k, c } = order[n];
+        dirty.delete(k);
+        if (c && c.lod === 1 && chunks.get(k) === c) composeTile(c);
+      }
     }
   }
 
@@ -178,20 +183,24 @@ function createStreamer(Q, R, core) {
       for (let cx = Math.floor((x - r - 130) / CHUNK); cx <= Math.floor((x + r + 130) / CHUNK); cx++) {
         const c = chunks.get(key(cx, cz));
         if (!c) continue;
+        // oriented boxes: cx, cz, hx, hz, cos, sin, bottom, top (gen.js)
         const b = c.boxes;
-        for (let i = 0; i < b.length; i += 6) if (b[i + 3] >= x - r && b[i] <= x + r && b[i + 5] >= z - r && b[i + 2] <= z + r) fn(b, i);
+        for (let i = 0; i < b.length; i += 8) { const e = b[i + 2] + b[i + 3] + r; if (Math.abs(b[i] - x) <= e && Math.abs(b[i + 1] - z) <= e) fn(b, i); }
       }
   }
   // the highest solid surface under (x, z) that is below y: a roof, a bridge deck, the street or the river
   function supportY(x, z, y) {
     let best = inRiver(x, z) ? RIVER.level : ROADY;
-    eachBoxNear(x, z, 0, (b, i) => { if (x >= b[i] && x <= b[i + 3] && z >= b[i + 2] && z <= b[i + 5] && b[i + 4] <= y + 0.5) best = Math.max(best, b[i + 4]); });
+    eachBoxNear(x, z, 0, (b, i) => {
+      const [lx, lz] = boxLocal(b, i, x, z);
+      if (Math.abs(lx) <= b[i + 2] && Math.abs(lz) <= b[i + 3] && b[i + 7] <= y + 0.5) best = Math.max(best, b[i + 7]);
+    });
     return best;
   }
   // the piece under (x, z) and its neighbours are in full, with collision
   function ready(x, z) {
     const ccx = Math.floor(x / CHUNK), ccz = Math.floor(z / CHUNK);
-    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const c = chunks.get(key(ccx + dx, ccz + dz)); if (!c || c.lod !== 1) return false; }
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const k = key(ccx + dx, ccz + dz), c = chunks.get(k); if (!c || c.lod !== 1 || dirty.has(k)) return false; }
     return true;
   }
   function findMark(type, x, z) {
@@ -213,3 +222,6 @@ function createStreamer(Q, R, core) {
   }
   return { update, supportY, eachBoxNear, ready, findMark, progressNear, stats };
 }
+// a point in an oriented box's own coordinates, and back
+function boxLocal(b, i, x, z) { const dx = x - b[i], dz = z - b[i + 1], c = b[i + 4], s = b[i + 5]; return [dx * c - dz * s, dx * s + dz * c]; }
+function boxWorld(b, i, lx, lz) { const c = b[i + 4], s = b[i + 5]; return [b[i] + lx * c + lz * s, b[i + 1] - lx * s + lz * c]; }

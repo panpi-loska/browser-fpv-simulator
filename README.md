@@ -15,6 +15,9 @@ with **WebGPU** (Chrome or Edge on desktop).
 - An endless city: it is generated around you as you fly, so it never runs out, and every place is always the same.
   Different districts give each part its own feel: downtowns with towers and searchlights, old town with narrow
   streets and neon, docks with cranes, containers and ships, industrial zones, quiet suburbs, parks, and rivers with bridges.
+- Streets that vary: between the avenues, each part of town has its own network: irregular grids with T junctions,
+  grids turned at an angle, diagonal boulevards, roundabouts, crooked old-town lanes, and winding suburban streets
+  with cul-de-sacs. Blocks come in all shapes, and buildings line up with their street.
 - Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.
 - Analog or digital video, chosen in the menu: analog has the snow and rolling lines of a real analog link, digital is
@@ -71,7 +74,8 @@ node build.mjs --min  # smaller output
 ```
 
 How the endless city works: `source/src/city.js` defines the city with formulas that hold anywhere
-(rivers, avenues, districts), `gen.js` builds one 256 m piece from them in a Web Worker, and `stream.js`
+(rivers, avenues, districts), `layout.js` lays out the streets and blocks between the avenues,
+`gen.js` builds one 256 m piece from them in a Web Worker, and `stream.js`
 keeps the pieces around the drone loaded (in full nearby, as a skyline farther out) and gives each nearby
 piece to libfpv as collision.
 

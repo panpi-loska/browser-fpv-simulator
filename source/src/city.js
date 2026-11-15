@@ -150,36 +150,7 @@ function superblock(i, A, B) {
   return sb;
 }
 
-// the streets inside a superblock and the blocks between them (the same whoever asks)
-function sbStreets(sb) {
-  if (sb.layout) return sb.layout;
-  const D = DISTRICTS[sb.kind], rng = mulberry32(sb.seed ^ 0x2545f491), half = AVE.w / 2;
-  const vs = [], hs = [];
-  if (D.street) {
-    const line = (a, b, out) => {
-      let p = a;
-      for (;;) {
-        p += D.street[0] + (D.street[1] - D.street[0]) * rng();
-        if (p > b - D.street[0] * 0.6) break;
-        out.push(p);
-      }
-    };
-    line(sb.x0 + half, sb.x1 - half, vs);
-    line(sb.z0 + half, sb.z1 - half, hs);
-  }
-  const ex = [sb.x0 + half, ...vs.flatMap((x) => [x - D.sw / 2, x + D.sw / 2]), sb.x1 - half];
-  const ez = [sb.z0 + half, ...hs.flatMap((z) => [z - D.sw / 2, z + D.sw / 2]), sb.z1 - half];
-  const blocks = [];
-  for (let a = 0; a < ex.length; a += 2)
-    for (let b = 0; b < ez.length; b += 2) {
-      const bl = { x0: ex[a], x1: ex[a + 1], z0: ez[b], z1: ez[b + 1] };
-      bl.cx = (bl.x0 + bl.x1) / 2; bl.cz = (bl.z0 + bl.z1) / 2;
-      bl.seed = pcg((sb.seed ^ pcg(a * 131 + b + 1)) >>> 0);
-      blocks.push(bl);
-    }
-  sb.layout = { vs, hs, blocks, sw: D.sw };
-  return sb.layout;
-}
+// the streets inside a superblock and the blocks between them: sbLayout (layout.js)
 
 // ---------- launch spots: Halvard Bay's six, then one in each kind of district nearby ----------
 function findDistrict(kind, x0, z0) {
@@ -204,8 +175,18 @@ function launchSpots() {
   for (const [kind, name] of [['oldtown', 'Old town'], ['docks', 'The docks'], ['industrial', 'Industrial zone'], ['suburb', 'Suburbs']]) {
     const sb = findDistrict(kind, 150, -200);
     if (!sb) continue;
-    const L = sbStreets(sb), z = sb.kind === 'docks' ? sb.z0 + AVE.w / 2 + 2 : (L.hs[0] ?? sb.cz);
-    spots.push({ name, pos: [sb.cx, 3, z], at: [sb.cx + 400, 25, z + 60], far: Math.hypot(sb.cx - 150, sb.cz + 200) });
+    // on one of its streets, looking along it (the docks: on the quay)
+    let pos = [sb.cx, 3, sb.z0], dir = [1, 0];
+    const L = sb.kind === 'docks' ? null : sbLayout(sb), road = L && L.roads[0];
+    if (sb.kind === 'docks') pos = [sb.cx, 3, sb.z0 + AVE.w / 2 + 2];
+    else if (road && road.pts) {
+      const i = Math.floor(road.pts.length / 2), p = road.pts[i], q = road.pts[i + 1], l = Math.hypot(q.x - p.x, q.z - p.z);
+      pos = [p.x, 3, p.z]; dir = [(q.x - p.x) / l, (q.z - p.z) / l];
+    } else if (road) {
+      const l = Math.hypot(road.bx - road.ax, road.bz - road.az);
+      pos = [(road.ax + road.bx) / 2, 3, (road.az + road.bz) / 2]; dir = [(road.bx - road.ax) / l, (road.bz - road.az) / l];
+    }
+    spots.push({ name, pos, at: [pos[0] + dir[0] * 400, 25, pos[2] + dir[1] * 400], far: Math.hypot(sb.cx - 150, sb.cz + 200) });
   }
   return spots;
 }
