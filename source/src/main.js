@@ -128,11 +128,12 @@ function launchPoint(p) {
   city.eachBoxNear(p[0], p[2], 90, (b, o) => {
     const top = b[o + 4];
     if (top > p[1] || b[o + 3] - b[o] < 12 || b[o + 5] - b[o + 2] < 12) return;
-    const cx = (b[o] + b[o + 3]) / 2, cz = (b[o + 2] + b[o + 5]) / 2;
+    // a quarter of the way out from the centre of the roof, where a spire or a tank may stand
+    const cx = b[o] + (b[o + 3] - b[o]) * 0.75, cz = b[o + 2] + (b[o + 5] - b[o + 2]) * 0.75;
     if (Math.hypot(cx - p[0], cz - p[2]) > 90) return;
     if (!best || top > best[1]) best = [cx, top, cz];
   });
-  // the roof's highest point at its centre (setback towers have smaller tiers on top)
+  // the roof's highest point there (setback towers have smaller tiers on top)
   return best ? [best[0], city.supportY(best[0], best[2], best[1] + 0.5), best[2]] : [p[0], ground, p[2]];
 }
 let pilotHome = [0, 0, 0];
