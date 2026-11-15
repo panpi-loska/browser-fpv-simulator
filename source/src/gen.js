@@ -200,24 +200,40 @@ const nightlife = (x, z) => vnoise(x * 0.004 + 3.1, z * 0.004 - 1.7) * 0.8 + 0.5
 const lampColor = (sb) => (sb.kind === 'industrial' || sb.kind === 'docks' ? MERCURY : sb.kind === 'midtown' && ih(sb.seed, 43) < 0.4 ? LED : LAMP);
 
 // ---------- one block of a superblock, by district ----------
+// How much each kind of district wants a place, from smooth fields: near an edge between two kinds
+// the blocks mix and buildings grade in height, instead of changing from one street to the next.
+function blockMix(x, z) {
+  const c = coreField(x, z), urban = 1 - smooth(0.06, 0.3, c);
+  return {
+    c,
+    ind: smooth(0.62, 0.78, vnoise(x / 1800 + 17.3, z / 1800 - 3.1)) * urban,
+    old: smooth(0.61, 0.77, vnoise(x / 1500 - 41.7, z / 1500 + 9.2)) * urban,
+    sub: smooth(0.46, 0.66, vnoise(x / 2600 + 5.5, z / 2600 + 77.1)) * (1 - smooth(0.0, 0.08, c)),
+  };
+}
 function genBlock(K, sb, b) {
   K.reseed(b.seed);
-  const { G, R, rd, Rd, Q } = K;
+  const { R, rd, Rd, Q } = K;
   const SW = 3.6, ix0 = b.x0 + SW, ix1 = b.x1 - SW, iz0 = b.z0 + SW, iz1 = b.z1 - SW;
-  const kind = sb.kind, c = coreField(b.cx, b.cz), nlBase = nightlife(b.cx, b.cz);
-  if (kind === 'park') return park(K, sb, b);
+  if (sb.kind === 'park') return park(K, sb, b);
+  const mx = blockMix(b.cx, b.cz), c = mx.c, nlBase = nightlife(b.cx, b.cz);
+  // each block draws its own lot, weighted by the fields (the same draw whoever asks)
+  const r1 = ih(b.seed, 91), r2 = ih(b.seed, 92), r3 = ih(b.seed, 93);
   sidewalk(K, b.x0, b.z0, b.x1, b.z1);
-  if (kind === 'industrial') return industrialBlock(K, sb, b, ix0, iz0, ix1, iz1);
-  if (kind === 'suburb') return suburbBlock(K, sb, b);
-  let H0, nl, maxLot, gapFn, styleOpt = {}, irregular = 0, trees = false;
-  if (kind === 'downtown' || kind === 'midtown') {
-    H0 = 12 + 320 * Math.pow(c, 1.5) + vnoise(b.cx * 0.01, b.cz * 0.01) * 12; nl = nlBase + (kind === 'downtown' ? 0.15 : 0);
-    maxLot = H0 > 170 ? 70 : H0 > 70 ? 40 : 30; trees = H0 < 70;
-  } else if (kind === 'oldtown') {
+  if (r1 < mx.ind) return industrialBlock(K, sb, b, ix0, iz0, ix1, iz1);
+  if (r2 < mx.sub && ix1 - ix0 > 18 && iz1 - iz0 > 18) return suburbBlock(K, sb, b);
+  const old = r3 < mx.old;
+  // apartment blocks: towers downtown, falling off smoothly towards the suburbs
+  const resH = (16 + vnoise(b.cx * 0.006, b.cz * 0.006) * 22) * (1 - 0.6 * mx.sub);
+  const towers = 12 + 320 * Math.pow(c, 1.5) + vnoise(b.cx * 0.01, b.cz * 0.01) * 12;
+  let H0, nl, maxLot, styleOpt = {}, irregular = 0, trees;
+  if (old) {
     H0 = 17 + vnoise(b.cx * 0.02, b.cz * 0.02) * 8; nl = 0.55 + nlBase * 0.6; maxLot = 17; irregular = 0.12;
-    styleOpt = { style: rd() < 0.7 ? 2 : 0, tiers: false };
-  } else {   // residential
-    H0 = 16 + vnoise(b.cx * 0.006, b.cz * 0.006) * 22; nl = 0.15 + nlBase * 0.35; maxLot = 28; trees = true;
+    styleOpt = { style: rd() < 0.7 ? 2 : 0, tiers: false }; trees = false;
+  } else {
+    H0 = Math.max(resH, towers);
+    nl = towers > resH ? nlBase + (c > 0.42 ? 0.15 : 0) : 0.15 + nlBase * 0.35;
+    maxLot = H0 > 170 ? 70 : H0 > 70 ? 40 : 28 - 6 * mx.sub; trees = H0 < 70;
   }
   const lc = lampColor(sb);
   if (trees && rd() < 0.8) {
@@ -227,7 +243,7 @@ function genBlock(K, sb, b) {
   if (K.rng() < 0.035 && H0 < 200) return plaza(K, ix0, iz0, ix1, iz1, lc);
   // building sites with their tower cranes; one is always beside Halvard Bay's downtown
   const forced = 430 >= b.x0 && 430 <= b.x1 && -430 >= b.z0 && -430 <= b.z1;
-  if ((forced || (K.rng() < 0.07 && H0 > 45)) && (kind === 'downtown' || kind === 'midtown') && ix1 - ix0 > 30 && iz1 - iz0 > 30) {
+  if ((forced || (K.rng() < 0.07 && H0 > 45)) && !old && c > 0.12 && ix1 - ix0 > 30 && iz1 - iz0 > 30) {
     const s = constructionSite(K, ix0, iz0, Math.min(ix1, ix0 + 75), Math.min(iz1, iz0 + 75), H0);
     K.marks.push({ type: 'crane', x: s.x, y: s.top, z: s.z });
     return null;
@@ -241,10 +257,10 @@ function genBlock(K, sb, b) {
     if (K.rng() < 0.05) { if (rd() < Q.trees) K.tree((lot.x0 + lot.x1) / 2, (lot.z0 + lot.z1) / 2, Rd(0.9, 1.3)); continue; }
     let H = H0 * (0.3 + 0.95 * Math.pow(K.rng(), 1.3));
     if (H0 > 120 && K.rng() < 0.06) H *= 1.4;
-    H = Math.max(Math.min(H, Math.max(w, d) * 7.5), kind === 'oldtown' ? R(9, 12) : R(7, 13));
-    const g = kind === 'oldtown' ? 0 : H0 > 60 ? R(1.5, 4) : K.rng() < 0.5 ? 0 : R(1, 2.5);
+    H = Math.max(Math.min(H, Math.max(w, d) * 7.5), old ? R(9, 12) : R(7, 13));
+    const g = old ? 0 : H0 > 60 ? R(1.5, 4) : K.rng() < 0.5 ? 0 : R(1, 2.5);
     const opt = { ...styleOpt };
-    if (kind === 'oldtown') opt.shop = clamp(nl + R(-0.2, 0.3), 0.2, 1);
+    if (old) opt.shop = clamp(nl + R(-0.2, 0.3), 0.2, 1);
     const bld = K.building(lot.x0 + g / 2, lot.z0 + g / 2, lot.x1 - g / 2, lot.z1 - g / 2, H, lot.sides, nl, H0, opt);
     if (bld && (!tallest || bld.H > tallest.H)) tallest = bld;
   }
@@ -368,10 +384,14 @@ function suburbBlock(K, sb, b) {
     G.cube.push(TM.box(cx, H / 2, cz, hw * 2, H, hd * 2), [...wall, 0.25], [MAT.building, 0, Math.floor(K.rng() * 16000000), 0], [style, H > 5 ? H / 2 : H, R(2.6, 3.4), 0.45]);
     K.collider(cx - hw, 0, cz - hd, cx + hw, H, cz + hd);
     K.footRect(cx - hw, cz - hd, cx + hw, cz + hd);
-    // the roof: a box turned 45 degrees about its ridge, half of it showing above the walls
-    const s = (hd * 2) / Math.SQRT2, roof = pickd([[0.18, 0.08, 0.06], [0.12, 0.12, 0.13], [0.25, 0.12, 0.08], [0.08, 0.09, 0.1]]);
-    K.basic(G.cube, TM.pitch(cx, H, cz, hw * 2 + 0.6, s, s, Math.SQRT1_2, Math.SQRT1_2), roof);
-    K.collider(cx - hw, H, cz - hd * 0.5, cx + hw, H + hd * 0.6, cz + hd * 0.5);
+    // the roof: a box turned 45 degrees about its ridge and squashed to a gable, its top half above the
+    // walls (eaves a little over them), its lower half hidden inside: the ends sit just within the walls
+    const eave = hd + 0.45, rh = Math.min(hd * 0.75, H * 0.8), sq = eave * Math.SQRT2;
+    const roof = pickd([[0.18, 0.08, 0.06], [0.12, 0.12, 0.13], [0.25, 0.12, 0.08], [0.08, 0.09, 0.1]]);
+    const m = TM.pitch(cx, H, cz, hw * 2 - 0.04, sq, sq, Math.SQRT1_2, Math.SQRT1_2);
+    m[5] *= rh / eave; m[6] *= rh / eave;
+    K.basic(G.cube, m, roof);
+    K.collider(cx - hw, H, cz - hd * 0.5, cx + hw, H + rh * 0.55, cz + hd * 0.5);
     if (rd() < 0.3) K.splat(cx, cz + hd + 2, 0.35, 0.25, 0.15, 3);
     if (rd() < 0.7 * Q.trees) K.tree(lot.x0 + Rd(1.5, 3), lot.z0 + Rd(1.5, 3), Rd(0.8, 1.3), rd() < 0.3);
   }
@@ -493,29 +513,44 @@ function ferrisWheel(K, px, pz) {
 
 // ---------- roads: strips, crossings, lamps and the cars on them ----------
 const CARS = [[0.5, 0.05, 0.04], [0.06, 0.07, 0.09], [0.6, 0.6, 0.62], [0.12, 0.2, 0.35], [0.03, 0.03, 0.03], [0.35, 0.35, 0.37], [0.05, 0.18, 0.12], [0.55, 0.38, 0.05]];
-// axis 0 runs along x at z = coord, axis 1 along z at x = coord; cars loop over [lo, hi]
-function lane(K, axis, coord, dir, avenue, lo, hi) {
-  const { G, Rd, rd, pickd, Q } = K, speed = Rd(9, 16), L = hi - lo;
-  for (let s = Rd(0, Q.carGap); s < L - 8; s += Q.carGap * Rd(0.4, 1.6) + 9) {
-    const q = axis === 0 ? [coord, lo, hi, dir * speed] : [coord, hi, lo, dir * speed];
-    if (avenue && rd() < 0.05) {
-      G.cube.push(TM.box(0, 1.8, 0, 11, 2.9, 2.5), [0.75, 0.75, 0.72, 0], [MAT.train, ANIM.car, K.seed(), s], q);
-      for (const z of [-0.8, 0.8]) { K.sprite(5.55, 0.9, z, [1, 0.92, 0.8], 4, 0.4, ANIM.car, 1, s, q); K.sprite(-5.55, 0.9, z, [1, 0.06, 0.03], 3, 0.32, ANIM.car, -1, s, q); }
-    } else {
-      const col = rd() < 0.12 ? [0.75, 0.55, 0.05] : pickd(CARS);
-      G.cube.push(TM.box(0, 0.72, 0, 4.4, 0.78, 1.86), [...col, 0], [MAT.basic, ANIM.car, K.seed(), s], q);
-      G.cube.push(TM.box(-0.3, 1.38, 0, 2.3, 0.58, 1.62), [0.02, 0.022, 0.026, 0], [MAT.basic, ANIM.car, K.seed(), s], q);
-      for (const z of [-0.62, 0.62]) { K.sprite(2.22, 0.78, z, [1, 0.92, 0.8], 4, 0.35, ANIM.car, 1, s, q); K.sprite(-2.22, 0.85, z, [1, 0.06, 0.03], 3, 0.3, ANIM.car, -1, s, q); }
-    }
+// Traffic on the avenues, which run on forever: every lane is a conveyor of slots CAR_STEP m apart
+// moving at the lane's own speed, the same in every piece; a piece draws the slots inside its own
+// stretch [lo, hi), and the shader decides which slots hold a car (and its colour) from the slot's
+// global number, so a car leaving one piece is already in the next. Nothing loops or pops.
+// axis 0 runs along x at z = coord, axis 1 along z at x = coord; dir +1 / -1
+const CAR_STEP = 12;
+function lane(K, axis, coord, dir, lo, hi) {
+  const { G } = K, speed = 9 + 7 * ih(Math.round(coord * 4), dir > 0 ? 81 : 82);
+  const q = axis === 0 ? [coord, lo, hi, dir * speed] : [coord, hi, lo, dir * speed];
+  for (let i = 0, n = Math.ceil((hi - lo) / CAR_STEP) + 1; i < n; i++) {
+    // body (p.z = 1: coloured by the shader), cabin, headlights, tail lights
+    G.cube.push(TM.box(0, 0.72, 0, 4.4, 0.78, 1.86), [0.3, 0.3, 0.3, 0], [MAT.basic, ANIM.car, 1, i], q);
+    G.cube.push(TM.box(-0.3, 1.38, 0, 2.3, 0.58, 1.62), [0.02, 0.022, 0.026, 0], [MAT.basic, ANIM.car, 0, i], q);
+    for (const z of [-0.62, 0.62]) { K.sprite(2.22, 0.78, z, [1, 0.92, 0.8], 4, 0.35, ANIM.car, 1, i, q); K.sprite(-2.22, 0.85, z, [1, 0.06, 0.03], 3, 0.3, ANIM.car, -1, i, q); }
   }
 }
-// both directions of a road; right-hand traffic: driving +x keeps to +z, driving +z keeps to -x
-function lanes(K, axis, coord, avenue, lo, hi, seed) {
-  if (!K.full || hi - lo < 30) return;
+// both directions of an avenue over [lo, hi); right-hand traffic: driving +x keeps to +z, driving +z keeps to -x
+function lanes(K, axis, coord, lo, hi) {
+  if (!K.full || hi - lo < 1) return;
+  for (const o of [2.2, 5.8]) {
+    if (axis === 0) { lane(K, 0, coord + o, 1, lo, hi); lane(K, 0, coord - o, -1, lo, hi); }
+    else { lane(K, 1, coord - o, 1, lo, hi); lane(K, 1, coord + o, -1, lo, hi); }
+  }
+}
+// side streets end at the avenues, so their cars are parked along the kerbs
+function parked(K, axis, coord, w, lo, hi, own, seed, crosses) {
+  if (!K.full) return;
   K.reseed(seed);
-  for (const o of avenue ? [2.2, 5.8] : [3]) {
-    if (axis === 0) { lane(K, 0, coord + o, 1, avenue, lo, hi); lane(K, 0, coord - o, -1, avenue, lo, hi); }
-    else { lane(K, 1, coord - o, 1, avenue, lo, hi); lane(K, 1, coord + o, -1, avenue, lo, hi); }
+  const { G, rd, Rd, pickd, Q } = K, every = Q.carGap * 0.35 + 6;
+  for (const side of [-1, 1]) {
+    const off = coord + side * (w / 2 - 1.2);
+    for (let s = lo + 9 + Rd(0, every); s < hi - 9; s += every * Rd(0.5, 1.5) + 5.5) {
+      const [x, z] = axis === 0 ? [s, off] : [off, s];
+      if (!own(x, z) || rd() < 0.25 || crosses.some((c) => Math.abs(s - c) < w / 2 + 6)) continue;
+      const col = rd() < 0.08 ? [0.75, 0.55, 0.05] : pickd(CARS), yaw = axis === 0 ? 0 : Math.PI / 2;
+      K.basic(G.cube, TM.yaw(x, 0.72, z, 4.4, 0.78, 1.86, yaw), col);
+      K.basic(G.cube, TM.yaw(axis === 0 ? x - 0.3 : x, 1.38, axis === 0 ? z : z + 0.3, 2.3, 0.58, 1.62, yaw), [0.02, 0.022, 0.026]);
+    }
   }
 }
 // the strip of a road, clipped to the piece; lamps on a lattice so neighbours line up
@@ -678,7 +713,7 @@ function genChunk(cx, cz, lod, Q) {
         roadLamps(K, 1, x, AVE.w, A.z, rz - RIVER.hw - RIVER.ramp, own, crosses, LAMP, step);
         roadLamps(K, 1, x, AVE.w, rz + RIVER.hw + RIVER.ramp, B.z, own, crosses, LAMP, step);
       } else roadLamps(K, 1, x, AVE.w, A.z, B.z, own, crosses, lampColor(superblock(i, A, B)), step);
-      if (own(x, (A.z + B.z) / 2)) lanes(K, 1, x, true, A.z, B.z, pcg(i * 7919 + A.k * 131 + A.m + 99));
+      lanes(K, 1, x, Math.max(A.z, Z0), Math.min(B.z, Z1));
     }
   }
   // ---- elevated lines, from one river slot to the next ----
@@ -701,7 +736,7 @@ function genChunk(cx, cz, lod, Q) {
       for (const [A, B] of [[below, l], [l, above]]) if (A && B) { const nb = superblock(xs[a].i, A, B); for (const x of sbStreets(nb).vs) crosses.push({ pos: x, w: sbStreets(nb).sw }); }
       const sbN = above ? superblock(xs[a].i, l, above) : null;
       roadLamps(K, 0, l.z, AVE.w, xa, xb, own, crosses, sbN ? lampColor(sbN) : LAMP, step);
-      if (own((xa + xb) / 2, l.z)) lanes(K, 0, l.z, true, xa, xb, pcg(xs[a].i * 3571 + l.k * 977 + l.m + 7));
+      lanes(K, 0, l.z, Math.max(xa, X0), Math.min(xb, X1));
       // crossings with the north-south avenues
       if (own(xa, l.z)) crossing(K, xa, l.z, AVE.w, AVE.w);
     }
@@ -718,7 +753,7 @@ function genChunk(cx, cz, lod, Q) {
         if (own(x, sb.z0)) crossing(K, x, sb.z0, L.sw, AVE.w);
         if (own(x, sb.z1)) crossing(K, x, sb.z1, L.sw, AVE.w);
       }
-      if (own(x, sb.cz)) lanes(K, 1, x, false, sb.z0 + half, sb.z1 - half, pcg(sb.seed ^ Math.round(x)));
+      parked(K, 1, x, L.sw, sb.z0 + half, sb.z1 - half, own, pcg(sb.seed ^ Math.round(x)), L.hs);
     }
     for (const z of L.hs) {
       if (z >= Z0 && z < Z1) {
@@ -729,7 +764,7 @@ function genChunk(cx, cz, lod, Q) {
         if (own(sb.x1, z)) crossing(K, sb.x1, z, AVE.w, L.sw);
         for (const x of L.vs) if (own(x, z)) crossing(K, x, z, L.sw, L.sw);
       }
-      if (own(sb.cx, z)) lanes(K, 0, z, false, sb.x0 + half, sb.x1 - half, pcg(sb.seed ^ Math.round(z * 3)));
+      parked(K, 0, z, L.sw, sb.x0 + half, sb.x1 - half, own, pcg(sb.seed ^ Math.round(z * 3)), L.vs);
     }
     for (const b of L.blocks) if (own(b.cx, b.cz)) keep(genBlock(K, sb, b));
   }

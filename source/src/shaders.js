@@ -3,7 +3,7 @@
 // wet asphalt, water, neon, light sprites, searchlights, rain, then bloom and tone mapping.
 // ---------------------------------------------------------------------------
 
-function sceneShader() {
+function sceneShader(Q) {
   const f = (x) => (+x).toFixed(4);
   return /*wgsl*/`
 diagnostic(off, derivative_uniformity);
@@ -36,6 +36,8 @@ const CHUNK = ${f(CHUNK)};
 const TILES = ${TILES};
 const SPAN = ${f(CHUNK * TILES)};
 const SPAN_PX = ${f(TILE * TILES)};
+const CAR_STEP = ${f(CAR_STEP)};
+const CAR_KEEP = ${f(clamp(CAR_STEP / (Q.carGap + 9), 0.05, 0.6))};
 const RIVER_Z0 = ${f(RIVER.z0)};
 const RIVER_P = ${f(RIVER.period)};
 const RIVER_HW = ${f(RIVER.hw)};
@@ -96,16 +98,21 @@ fn bridgeH(x: f32, z: f32) -> f32 {
 }
 
 // ---------- animation: everything that moves is moved here, on the GPU ----------
-struct Pose { pos: vec3f, yaw: f32, pitch: f32 };
-fn carPose(q: vec4f, phase: f32, t: f32) -> Pose {
-  // q: the road (x for a north-south one, z for east-west), the stretch [q.y, q.z] (swapped for
-  // north-south), the speed (negative: the other way); cars loop over their stretch
+struct Pose { pos: vec3f, yaw: f32, pitch: f32, on: bool, k: u32 };
+fn carPose(q: vec4f, slot: f32, t: f32) -> Pose {
+  // q: the road's line (x for north-south, z for east-west), this piece's stretch [q.y, q.z] (swapped
+  // for north-south), the lane's speed (negative: the other way). The lane is a conveyor of slots
+  // CAR_STEP apart; slot k is at k * CAR_STEP + phase + speed * t, the same in every piece.
   let ns = q.y > q.z;
-  let lo = min(q.y, q.z); let hi = max(q.y, q.z); let L = max(hi - lo, 1.0);
-  var s = lo + fract((phase + t * abs(q.w)) / L) * L;
-  let fw = q.w > 0.0;
-  if (!fw) { s = lo + hi - s; }
+  let lo = min(q.y, q.z); let hi = max(q.y, q.z);
+  let lid = pcg(bitcast<u32>(i32(round(q.x * 4.0))) ^ select(0x9e3779b9u, 0x7f4a7c15u, q.w > 0.0));
+  let base = rnd(lid) * CAR_STEP + q.w * t;
+  let k0 = ceil((lo - base) / CAR_STEP);
+  let s = base + (k0 + slot) * CAR_STEP;
   var P: Pose;
+  P.k = pcg(bitcast<u32>(i32(k0 + slot)) ^ lid);
+  P.on = s < hi && rnd(P.k) < CAR_KEEP;
+  let fw = q.w > 0.0;
   if (!ns) {
     P.pos = vec3f(s, ROADY, q.x); P.yaw = select(PI, 0.0, fw); P.pitch = 0.0;
   } else {
@@ -116,13 +123,22 @@ fn carPose(q: vec4f, phase: f32, t: f32) -> Pose {
   }
   return P;
 }
-struct AR { w: vec3f, n: vec3f, em: f32 };
+fn carColor(k: u32) -> vec3f {
+  let r = rnd(k ^ 0x51ed27u);
+  if (r < 0.1) { return vec3f(0.75, 0.55, 0.05); }   // a taxi
+  let c = array<vec3f, 8>(vec3f(0.5, 0.05, 0.04), vec3f(0.06, 0.07, 0.09), vec3f(0.6, 0.6, 0.62), vec3f(0.12, 0.2, 0.35),
+                          vec3f(0.03, 0.03, 0.03), vec3f(0.35, 0.35, 0.37), vec3f(0.05, 0.18, 0.12), vec3f(0.55, 0.38, 0.05));
+  return c[u32(rnd(k ^ 0x1234567u) * 7.999)];
+}
+struct AR { w: vec3f, n: vec3f, em: f32, cc: vec4f };
 fn animate(I: Inst, w0: vec3f, n0: vec3f, t: f32) -> AR {
-  var r: AR; r.w = w0; r.n = n0; r.em = 1.0;
+  var r: AR; r.w = w0; r.n = n0; r.em = 1.0; r.cc = vec4f(0.0);
   let a = u32(I.p.y + 0.5);
-  if (a == 1u) {          // car: drives along its lane, climbs the bridges
+  if (a == 1u) {          // car: rides its lane's conveyor, climbs the bridges; an empty slot draws nothing
     let P = carPose(I.q, I.p.w, t);
+    if (!P.on) { r.w = vec3f(0.0, -1e4, 0.0); r.em = 0.0; return r; }
     r.w = P.pos + rotY(rotZ(w0, P.pitch), P.yaw); r.n = rotY(rotZ(n0, P.pitch), P.yaw);
+    if (I.p.z > 0.5 && I.p.x < 0.5) { r.cc = vec4f(carColor(P.k), 1.0); }
   } else if (a == 2u) {   // train: runs its line from station to station (q: x, ends, speed)
     let L = max(I.q.z - I.q.y, 1.0);
     var s = I.q.y + fract((I.p.w + t * abs(I.q.w)) / L) * L;
@@ -438,6 +454,7 @@ struct PO {
   @location(2) lp: vec3f,
   @location(3) @interpolate(flat) ii: u32,
   @location(4) em: f32,
+  @location(5) @interpolate(flat) cc: vec4f,
 };
 @vertex fn vs_props(@location(0) p: vec3f, @location(1) n: vec3f, @builtin(instance_index) ii: u32) -> PO {
   let I = inst[ii];
@@ -450,7 +467,7 @@ struct PO {
   let A = animate(I, w0, vec3f(dot(I.m0.xyz, nn), dot(I.m1.xyz, nn), dot(I.m2.xyz, nn)), u.cam.w);
   var o: PO;
   o.pos = u.viewProj * vec4f(A.w, 1.0);
-  o.w = A.w; o.n = A.n; o.lp = p; o.ii = ii; o.em = A.em;
+  o.w = A.w; o.n = A.n; o.lp = p; o.ii = ii; o.em = A.em; o.cc = A.cc;
   return o;
 }
 @fragment fn fs_props(i: PO) -> @location(0) vec4f {
@@ -471,7 +488,8 @@ struct PO {
     case 7u: { col = shadeNeon(I, i.lp, n, i.w); }
     case 8u: { col = shadeTrain(I, i.lp, n, i.w); }
     default: {
-      col = I.col.rgb * (ambientL(n, i.w.y) + sunL(n) + streetL(i.w, n)) + skyBase(reflect(V, n)) * fresnel(clamp(-dot(V, n), 0.0, 1.0)) * 0.25;
+      let alb = select(I.col.rgb, i.cc.rgb, i.cc.a > 0.5);
+      col = alb * (ambientL(n, i.w.y) + sunL(n) + streetL(i.w, n)) + skyBase(reflect(V, n)) * fresnel(clamp(-dot(V, n), 0.0, 1.0)) * 0.25;
     }
   }
   return vec4f(applyFog(col, i.w), 1.0);
@@ -591,7 +609,7 @@ struct SO { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1) 
   var k = A.em;
   let anim = u32(I.p.y + 0.5);
   var col = I.col.rgb;
-  if (anim == 1u && abs(I.p.z) > 0.5) {   // headlights face forward, tail lights back
+  if (anim == 1u && abs(I.p.z) > 0.5 && k > 0.0) {   // headlights face forward, tail lights back
     let P = carPose(I.q, I.p.w, u.cam.w);
     let f = dot(rotY(vec3f(1.0, 0.0, 0.0), P.yaw), normalize(u.cam.xyz - c)) * sign(I.p.z);
     k *= mix(0.1, 1.0, smoothstep(-0.3, 0.7, f));

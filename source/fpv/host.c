@@ -268,6 +268,16 @@ API void host_sim_options(uint32_t o) { fpv_sim_set_options(o); }
 // the FPV camera's angle (degrees, 0..70; < 0 = the quad's own); needs patches/0001-camera-uptilt-api.patch
 API void host_camera_uptilt(float d) { fpv_camera_set_uptilt(d); }
 API float host_camera_get_uptilt(void) { return fpv_camera_get_uptilt(); }
+// the video link for every drone: -1 each preset's own, 0 analog, 1 digital (patches/0002)
+API void host_video_mode(int m) { fpv_video_set_mode(m); }
+API int host_video_get_mode(void) { return fpv_video_get_mode(); }
+// Betaflight CLI commands (the pilot's name on the OSD: set craft_name = ..., save); 0 = done
+API int host_cli(const char *commands) {
+    char *out = NULL;
+    fpv_result r = fpv_cli_exec(commands, &out);
+    if (out) fpv_free(out);
+    return (int)r;
+}
 API uint32_t host_get_sim_options(void) { return fpv_sim_get_options(); }
 
 // ---- sound: the motors and Betaflight's beeper ----

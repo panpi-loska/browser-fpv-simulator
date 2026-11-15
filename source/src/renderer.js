@@ -147,7 +147,7 @@ async function createRenderer(canvas, Q, base, onLost) {
     if (errs.length) throw new Error(`Shader error in ${label}: ${errs[0].message} (line ${errs[0].lineNum})`);
     return m;
   };
-  const sceneMod = await compile(sceneShader(), 'scene');
+  const sceneMod = await compile(sceneShader(Q), 'scene');
   const postMod = await compile(POST_WGSL, 'post');
 
   const bgl = device.createBindGroupLayout({

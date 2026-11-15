@@ -1,0 +1,131 @@
+diff --git a/include/libfpv.h b/include/libfpv.h
+index a0e7dd1..879a034 100644
+--- a/include/libfpv.h
++++ b/include/libfpv.h
+@@ -777,6 +777,10 @@ FPV_API uint32_t fpv_sim_get_options(void);
+ FPV_API void fpv_camera_set_uptilt(float degrees);
+ /* The angle in use: the player's, or the preset's when none is set. */
+ FPV_API float fpv_camera_get_uptilt(void);
++/* The video link for every drone: -1 = each preset's own VTX, 0 = analog, 1 = digital
++ * (HD: 16:9, freezes and blocks instead of snow, the HD OSD look). Saved with the settings. */
++FPV_API void fpv_video_set_mode(int mode);
++FPV_API int fpv_video_get_mode(void);
+ 
+ /* ===========================================================================
+  * The RC link
+diff --git a/src/api.cpp b/src/api.cpp
+index c0b650f..d021e10 100644
+--- a/src/api.cpp
++++ b/src/api.cpp
+@@ -63,6 +63,7 @@ void loadSettings() {
+         s.hearFrom = hear == "drone" ? HearFrom::Drone : hear == "pilot" ? HearFrom::Pilot : HearFrom::Auto;
+         s.osdStyle = j.value("osdStyle", s.osdStyle);
+         s.cameraUptilt = j.value("cameraUptilt", s.cameraUptilt);
++        s.videoMode = j.value("videoMode", s.videoMode);
+         s.cameraFov = j.value("cameraFov", s.cameraFov);
+         s.cameraFisheye = std::clamp(j.value("cameraFisheye", s.cameraFisheye), 0.0f, 1.0f);
+         s.chaseSmoothing = j.value("chaseSmoothing", s.chaseSmoothing);
+@@ -137,6 +138,7 @@ void saveSettings() {
+                                                            : "auto"},
+               {"osdStyle", s.osdStyle},
+               {"cameraUptilt", s.cameraUptilt},
++              {"videoMode", s.videoMode},
+               {"cameraFov", s.cameraFov},
+               {"cameraFisheye", s.cameraFisheye},
+               {"chaseSmoothing", s.chaseSmoothing},
+@@ -407,6 +409,30 @@ static bool restoreShippedPreset(const std::string &fileName) {
+     return true;
+ }
+ 
++// The player's choice of video link: every preset's VTX made analog or digital (keeping its
++// power), or each as its file says. presetsBase keeps the presets as loaded.
++static void applyVideoMode() {
++    Lib &L = lib();
++    if (L.presetsBase.size() != L.presets.size()) L.presetsBase = L.presets;
++    const int m = L.settings.videoMode;
++    for (size_t i = 0; i < L.presets.size(); i++) {
++        DronePreset p = L.presetsBase[i];
++        if (m >= 0 && p.vtx.digital != (m == 1)) {
++            p.vtx.digital = m == 1;
++            if (m == 1) {
++                p.vtx.height = 1080;
++                p.vtx.fps = 60.0f;
++                p.vtx.freezes = true;
++                p.vtx.sensitivityDbm = -98.0f;
++                p.camera.aspect = 16.0f / 9.0f;
++            } else {
++                p.camera.aspect = 4.0f / 3.0f;
++            }
++        }
++        L.presets[i] = p;
++    }
++}
++
+ // Re-reads the preset folder, keeping `fileName` selected if it still exists.
+ static void reloadPresets(const std::string &fileName) {
+     Lib &L = lib();
+@@ -415,6 +441,8 @@ static void reloadPresets(const std::string &fileName) {
+     for (auto &e : errors) FPV_LOGW("preset ignored: %s", e.c_str());
+     if (presets.empty()) presets.push_back(builtinDefaultPreset());
+     L.presets = std::move(presets);
++    L.presetsBase = L.presets;
++    applyVideoMode();
+     int idx = findPreset(fileName);
+     L.presetIndex = idx >= 0 ? idx : 0;
+     L.settings.preset = currentPreset().fileName;
+@@ -704,6 +732,8 @@ FPV_API fpv_result fpv_global_init(const fpv_global_config *cfgIn) {
+     for (auto &e : errors) FPV_LOGW("preset ignored: %s", e.c_str());
+     if (L.presets.empty()) L.presets.push_back(builtinDefaultPreset());
+     loadSettings();
++    L.presetsBase = L.presets;
++    applyVideoMode();
+     for (auto &kv : L.settings.controlKeys) L.input.setControlKey(kv.first, kv.second);
+     L.input.setKeyboardHover(L.settings.keyboardHover);
+     L.input.setKeyboardThrottleExpo(L.settings.keyboardThrottleExpo);
+@@ -1057,6 +1087,26 @@ FPV_API float fpv_camera_get_uptilt(void) {
+     return L.settings.cameraUptilt >= 0 ? L.settings.cameraUptilt : currentPreset().camera.uptiltDeg;
+ }
+ 
++FPV_API void fpv_video_set_mode(int mode) {
++    Lib &L = lib();
++    std::lock_guard<std::recursive_mutex> lock(L.mutex);
++    L.settings.videoMode = mode < 0 ? -1 : mode > 0 ? 1 : 0;
++    if (L.settings.videoMode >= 0) L.settings.osdStyle = L.settings.videoMode ? FPV_OSD_STYLE_HD : FPV_OSD_STYLE_ANALOG;
++    if (!L.initialized) return;
++    applyVideoMode();
++    if (L.droneExists) {
++        const DronePreset p = currentPreset();
++        L.runner.call([&] { L.flight.applyPreset(p); });
++    }
++    saveSettings();
++}
++
++FPV_API int fpv_video_get_mode(void) {
++    Lib &L = lib();
++    std::lock_guard<std::recursive_mutex> lock(L.mutex);
++    return L.settings.videoMode;
++}
++
+ // --- the RC link (D36) -------------------------------------------------------------
+ 
+ FPV_API void fpv_rc_link_config_defaults(fpv_rc_link_config *c) {
+diff --git a/src/lib.h b/src/lib.h
+index 8ca9a54..2ffb4a2 100644
+--- a/src/lib.h
++++ b/src/lib.h
+@@ -43,6 +43,7 @@ struct Settings {
+     // camera overrides (< 0 = use the preset's value)
+     float cameraUptilt = -1, cameraFov = -1;
+     float cameraFisheye = 0.5f;  // lens strength 0..1, 0 = off (the preset's own k1/k2)
++    int videoMode = -1;  // the video link: -1 each preset's own, 0 analog, 1 digital
+     bool chaseSmoothing = true;
+     // the video feed post-process (frame.video_feed), on by default in games that draw it
+     bool videoNoise = true;        // the link's noise
+@@ -95,6 +96,7 @@ struct Lib {
+     Runner runner{flight, input};
+ 
+     std::vector<DronePreset> presets;
++    std::vector<DronePreset> presetsBase;  // the presets as their files say (presets has the video mode applied)
+     std::string defaultDiff;  // fpv_set_default_betaflight_diff, applied to new EEPROMs
+     int presetIndex = 0;
+     Settings settings;

@@ -202,6 +202,7 @@ function updateMenuButtons() {
   [...$('r').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === raining));
   [...$('sg').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === unlimited));
   [...$('am').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === audio.ambient));
+  [...$('vm').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === digital));
 }
 function setTime(k) { timeKey = k; const p = loadPrefs(); p.time = k; savePrefs(p); updateMenuButtons(); }
 function setRain(on) { raining = on; applyWind(); const p = loadPrefs(); p.rain = on; savePrefs(p); updateMenuButtons(); }
@@ -212,6 +213,25 @@ function setRange(on) { unlimited = on; if (!on) core.setPilot(pilotHome); const
 // the FPV camera's angle above the frame: libfpv's own setting, so it matches F8 > Camera & sound
 function setTilt(d) { core.uptilt = clamp(Math.round(d / 5) * 5, 0, 70); updateTilt(); }
 function updateTilt() { $('can').textContent = `${Math.round(core.uptilt)}°`; }
+// the pilot's name on the OSD: Betaflight's craft name (each drone keeps its own, so it is set again
+// whenever the settings close, in case another drone was picked there)
+const cleanName = (v) => v.toUpperCase().replace(/[^A-Z0-9 .!_-]/g, '').replace(/\s+/g, ' ').slice(0, 16);
+let pilotName = cleanName(prefs.name || '').trim();
+$('pni').value = pilotName;
+function applyName() { if (pilotName) core.cli(`set craft_name = ${pilotName}\nsave`); }
+applyName();
+$('pni').addEventListener('input', () => { const v = cleanName($('pni').value); if (v !== $('pni').value) $('pni').value = v; });
+$('pni').addEventListener('change', () => {
+  pilotName = cleanName($('pni').value).trim(); $('pni').value = pilotName;
+  const p = loadPrefs(); p.name = pilotName; savePrefs(p);
+  applyName();
+});
+$('pni').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); $('pni').blur(); } e.stopPropagation(); });
+// the video link: analog (snow, rolling lines, the OSD in the picture) or digital (HD, 16:9, blocks and freezes)
+let digital = prefs.video === 'digital';
+core.videoMode = digital ? 1 : 0;
+function setVideo(on) { digital = on; core.videoMode = on ? 1 : 0; const p = loadPrefs(); p.video = on ? 'digital' : 'analog'; savePrefs(p); updateMenuButtons(); }
+[...$('vm').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setVideo(i === 1); });
 $('cal').onclick = () => setTilt(core.uptilt - 5);
 $('car').onclick = () => setTilt(core.uptilt + 5);
 $('cad').onclick = () => { core.uptilt = -1; updateTilt(); };
@@ -354,11 +374,11 @@ function frame(now) {
   const g = goggles.drawMain(core, R.ldr, f, entered && viewMode === 0);
   // the OSD over the picture (digital, or analog effects off), and the F8 overlay
   const showOsd = entered && viewMode === 0 && f && !g.osdIn && !f.osdDisabled;
-  const osd = showOsd ? core.osd(innerWidth, innerHeight, f.video.flags ? f.video.osdStyle : 0) : null;
+  const osd = showOsd ? core.osd(innerWidth, innerHeight, f.video.osdStyle) : null;
   if (core.overlayIsOpen && !overlayAsked) core.overlayOpen(false);
   let overlay = core.overlay(dt);
   if (core.overlayIsOpen && !overlayAsked) { core.overlayOpen(false); overlay = null; }
-  if (!core.overlayIsOpen) overlayAsked = false;
+  if (!core.overlayIsOpen) { if (overlayAsked) applyName(); overlayAsked = false; }
   goggles.drawUICanvas(core, osd, overlay, [innerWidth, innerHeight]);
   document.body.classList.toggle('ov', !!overlay);
   audio.update(dt, { alt: view.pos[1], speed: f ? (f.speedKmh / 3.6) * 3 : 0, rain: env.rain });

@@ -71,6 +71,11 @@ p { margin: 0; }
 #ca b { flex: 1.6; text-align: center; font-size: .9em; color: var(--teal); }
 #ca button { flex: .5; }
 #ca #cad { flex: 1.1; }
+#pn input {
+  flex: 1; min-width: 0; padding: .45em .6em; border: 1px solid #ffffff1c; border-radius: 3px; background: #ffffff08; color: var(--teal);
+  font: 600 .85em var(--mono); letter-spacing: .14em; text-transform: uppercase; outline: none;
+}
+#pn input:focus { border-color: var(--amber-d); }
 .loc { font-size: 1.05em; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink); }
 .loc small { display: block; margin-top: .3em; font-size: .68em; font-weight: 500; letter-spacing: .04em; text-transform: none; color: var(--dim); line-height: 1.5; }
 #sp b { flex: 3; text-align: center; font-size: .82em; letter-spacing: .1em; text-transform: uppercase; color: var(--teal); }
@@ -139,10 +144,12 @@ body:not(.g) #v { display: none; }
         <div><p class=label>Location</p><p class=loc>Halvard Bay <small>an endless river city at dusk · fly on and it keeps going: downtowns, old town, docks, industry, suburbs</small></p></div>
         <div class=opts>
           <p class=label>Flight</p>
+          <p class=row id=pn><span>Pilot name</span><input id=pni maxlength=16 spellcheck=false autocomplete=off placeholder="ON THE OSD" aria-label="Your name on the OSD"></p>
           <p class=row id=sp><span>Launch</span><button id=spl aria-label="Previous launch spot">◀</button><b id=spn></b><button id=spr aria-label="Next launch spot">▶</button></p>
           <p class=row id=ca><span>Camera angle</span><button id=cal aria-label="Lower the camera">◀</button><b id=can></b><button id=car aria-label="Raise the camera">▶</button><button id=cad>Quad's</button></p>
           <p class=row id=t><span>Time</span><button>Dusk</button><button>Night</button><button>Dawn</button></p>
           <p class=row id=r><span>Weather</span><button>Clear</button><button>Rain</button></p>
+          <p class=row id=vm><span>Video</span><button>Analog</button><button>Digital</button></p>
           <p class=row id=sg><span>Video range</span><button>Real</button><button>Unlimited</button></p>
           <p class=row id=am><span>Ambience</span><button>Off</button><button>On</button></p>
           <p class=row id=q><span>Detail</span><button>Low</button><button>Med</button><button>High</button></p>

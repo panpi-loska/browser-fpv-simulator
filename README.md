@@ -17,7 +17,9 @@ with **WebGPU** (Chrome or Edge on desktop).
   streets and neon, docks with cranes, containers and ships, industrial zones, quiet suburbs, parks, and rivers with bridges.
 - Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.
-- Goggles view with fisheye lens and analog video breakup at long range (can be turned off).
+- Analog or digital video, chosen in the menu: analog has the snow and rolling lines of a real analog link, digital is
+  crisp 16:9 HD with blocky breakup. Video breakup at long range can be turned off.
+- Your own pilot name on the OSD, set in the menu.
 - Adjustable camera angle, plus chase and line-of-sight views.
 - Radio setup wizard for RadioMaster Pocket and any EdgeTX / OpenTX / ELRS radio over USB.
 
@@ -80,7 +82,7 @@ It needs Emscripten 4.0+:
 ```bash
 git clone --recursive https://github.com/hammerill/libfpv.git && cd libfpv
 git checkout c0821de && git submodule update --init
-git apply ../browser-fpv-simulator/source/fpv/patches/0001-camera-uptilt-api.patch
+git apply ../browser-fpv-simulator/source/fpv/patches/*.patch
 emcmake cmake -S . -B build/web && cmake --build build/web -j
 cd ../browser-fpv-simulator/source/fpv && LIBFPV=../../../libfpv ./build.sh
 ```

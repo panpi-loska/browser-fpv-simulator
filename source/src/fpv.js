@@ -76,6 +76,15 @@ class FPV {
     return id;
   }
   removeObject(id) { this.M._host_object_delete(id); }
+  // the video link for every drone: 0 analog, 1 digital (-1 each drone's own)
+  get videoMode() { return this.M._host_video_get_mode(); }
+  set videoMode(m) { this.M._host_video_mode(m); }
+  // Betaflight CLI commands, newline separated; true when they ran
+  cli(commands) {
+    const M = this.M, p = M.stringToNewUTF8(commands), r = M._host_cli(p);
+    M._free(p);
+    return r === 0;
+  }
   // creates the drone, or teleports and repairs it; rot is a quaternion [x, y, z, w]
   spawn(pos, rot) { this.M._host_drone_spawn(pos[0], pos[1], pos[2], rot[0], rot[1], rot[2], rot[3]); }
   repair() { this.M._host_drone_repair(); }
