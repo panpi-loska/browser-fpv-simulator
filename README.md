@@ -29,11 +29,10 @@ with **WebGPU** (Chrome or Edge on desktop).
 
 **Locally:**
 
-1. Download [`index.html`](index.html).
-2. Serve the folder, for example with `python -m http.server`.
-3. Open `http://localhost:8000` in Chrome or Edge and press **Fly**.
+Download [`index.html`](https://raw.githubusercontent.com/panpi-loska/browser-fpv-simulator/main/index.html)
+(right click, *Save link as*), open it in Chrome or Edge and press **Fly**. That's all: it's one file, nothing to install.
 
-The first load downloads about 0.8 MB. If the page says WebGPU is missing, update your browser or turn on hardware acceleration.
+Online, the first load downloads about 0.8 MB. If the page says WebGPU is missing, update your browser or turn on hardware acceleration.
 
 ## Using a radio
 
