@@ -2,14 +2,8 @@
 // layout.js: the streets inside a superblock (the space between four avenues), and the blocks they
 // leave. Every superblock gets its own network, from its own seed, so it comes out the same for
 // every piece of the city that asks:
-//   grid      streets crossing at right angles, ending in T junctions, blocks of many sizes
-//   rotated   the same, the whole grid turned 15-35 degrees from the avenues
-//   diagonal  a boulevard cutting the superblock corner to corner, grid on both sides
-//   radial    a roundabout in the middle, streets out from it, then smaller streets
-//   organic   old town: crooked, narrow streets at all angles
-//   curvy     the suburbs: winding streets, cul-de-sacs, houses facing the street
-// Blocks are convex polygons (the space between streets: every street is a straight cut across a
-// polygon, so the pieces stay convex); curvy suburbs are streets with houses along them instead.
+// a grid of streets at right angles, its spacing set by the district. The polygon helpers below are
+// what gen.js builds blocks with (a block is a rectangle here, but a convex polygon would do).
 // ---------------------------------------------------------------------------
 
 // ---------- convex polygons: [{ x, z, t }], t tags the edge from this point to the next ----------
@@ -103,227 +97,133 @@ function longestEdgeAngle(P) {
   return ang;
 }
 
-// ---------- a superblock's network ----------
-const STYLE_WEIGHTS = {
-  downtown: [['grid', 7], ['diagonal', 1.2], ['radial', 0.8], ['rotated', 1]],
-  midtown: [['grid', 4], ['rotated', 2], ['diagonal', 1.5], ['radial', 1.5]],
-  residential: [['grid', 3.5], ['rotated', 3], ['diagonal', 2], ['radial', 1.5]],
-  oldtown: [['organic', 1]],
-  industrial: [['grid', 3], ['diagonal', 1], ['rotated', 1]],
-  suburb: [['curvy', 1]],
+// ---------- a superblock's streets: a grid, as a real city has ----------
+// Streets lie on lattices shared by the whole city (positions multiple of 30 m, a little jitter keyed
+// to the line), so they carry on across the avenues, and districts whose spacings share a multiple
+// share streets too. Each district has its own block size; some lattice lines are missing (longer
+// blocks), and some blocks are joined (a street stops at a T): rectangles of many sizes, no odd shapes.
+// The spacings nest (60 / 120 / 240 m), so where two districts meet across an avenue the sparser
+// one's streets are a subset of the denser one's and carry straight on.
+// keep: the share of lattice lines a district keeps (the same draw everywhere, so a line kept in a
+// sparse district is kept in a dense one too); a dropped line is put back if its neighbours are gone
+// too, so no stretch goes much more than one and a half blocks without a street
+const GRID = {   // spacing of the streets that run north-south (sx) and east-west (sz), their width
+  downtown: { sx: 120, sz: 120, w: 12, join: 0.06, keep: 0.97 },
+  midtown: { sx: 120, sz: 60, w: 12, join: 0.12, keep: 0.93 },
+  residential: { sx: 120, sz: 60, w: 11, join: 0.12, keep: 0.88 },
+  oldtown: { sx: 60, sz: 60, w: 8, join: 0.14, keep: 0.92 },
+  industrial: { sx: 240, sz: 120, w: 14, join: 0.2, keep: 0.8 },
+  suburb: { sx: 120, sz: 60, w: 9, join: 0.08, keep: 0.9 },
 };
-const STREET = {   // street width, the area a block aims for, its smallest side
-  downtown: { w: 12, area: 9000, side: 45 }, midtown: { w: 12, area: 7000, side: 40 }, residential: { w: 11, area: 5200, side: 34 },
-  oldtown: { w: 8, area: 2600, side: 24 }, industrial: { w: 14, area: 22000, side: 70 }, suburb: { w: 9, area: 0, side: 0 },
-};
+const lineX = (n) => n * 30 + (ih(n, 101) - 0.5) * 6;
+const lineZ = (n) => n * 30 + (ih(n, 103) - 0.5) * 6;
+// the lattice lines of spacing S inside (a, b): far enough from the avenues that no block is a thin
+// strip, not dropped, and never closer together than a block can be
+function latticeLines(a, b, S, at, salt, keep) {
+  const out = [], k = S / 30, m = Math.max(S * 0.6, 36), gap = Math.max(S * 0.55, 34);
+  let last = a;
+  for (let n = Math.ceil((a + m) / S) * k - k; n * 30 <= b; n += k) {
+    const p = at(n);
+    if (p <= a + m || p >= b - m || p - last < gap) continue;
+    // kept by the shared draw, or put back after a long stretch (if it leaves room before the end)
+    if (ih(n, salt) < keep || (p - last > S * 1.55 && b - p > S * 0.6)) { out.push(p); last = p; }
+  }
+  // a wide superblock never goes without a street: the lattice line nearest its middle (a finer
+  // lattice if the district's own has none far enough from both avenues)
+  if (!out.length && b - a > 260)
+    for (const T of [S, 120, 60]) {
+      const kk = T / 30, n = Math.round((a + b) / 2 / T) * kk, p = at(n);
+      if (p > a + 90 && p < b - 90) { out.push(p); break; }
+    }
+  return out;
+}
 function sbLayout(sb) {
   if (sb.layout) return sb.layout;
-  const rng = mulberry32(sb.seed ^ 0x2545f491), R = (a, b) => a + (b - a) * rng();
   const half = AVE.w / 2, X0 = sb.x0 + half, X1 = sb.x1 - half, Z0 = sb.z0 + half, Z1 = sb.z1 - half;
-  const L = { style: 'none', roads: [], blocks: [], patches: [], edgeJ: { x0: [], x1: [], z0: [], z1: [] }, houses: [], trees: [], round: null };
+  const L = { style: 'grid', roads: [], blocks: [], crossings: [], edgeJ: { x0: [], x1: [], z0: [], z1: [] } };
   sb.layout = L;
-  if (sb.kind === 'park' || sb.river) { L.blocks.push({ poly: rect(X0, Z0, X1, Z1), whole: true }); finishBlocks(sb, L); return L; }
-  // Halvard Bay's own downtown keeps its grid
-  const near = Math.hypot(sb.cx - 150, sb.cz + 300) < 900;
-  const W = STYLE_WEIGHTS[sb.kind] || [['grid', 1]];
-  let r = rng() * W.reduce((s, [, w]) => s + w, 0), style = W[0][0];
-  for (const [k, w] of W) { if ((r -= w) <= 0) { style = k; break; } }
-  if (near) style = 'grid';
-  L.style = style;
-  const S = STREET[sb.kind] || STREET.residential;
-  if (style === 'curvy') { curvySuburb(sb, L, rng, X0, Z0, X1, Z1, S.w); return L; }
-
-  // a street along the line P + s*d, cutting polygon poly: two polygons, and the street between them
-  // (null, and nothing recorded, if either side would be smaller than minArea)
-  const cut = (poly, px, pz, dx, dz, w, kind = 'street', minArea = 0) => {
-    const ch = chordOf(poly, px, pz, dx, dz);
-    if (!ch) return null;
-    const nx = -dz, nz = dx, rid = L.roads.length, tag = { rid };
-    const a = clipPoly(poly, px, pz, nx, nz, w / 2, tag), b = clipPoly(poly, px, pz, -nx, -nz, w / 2, tag);
-    if (!a || !b || Math.abs(polyArea(a)) < minArea || Math.abs(polyArea(b)) < minArea) return null;
-    const road = { ax: px + dx * ch.lo, az: pz + dz * ch.lo, bx: px + dx * ch.hi, bz: pz + dz * ch.hi, w, kind, junc: [] };
-    L.roads.push(road);
-    for (const [t, x, z] of [[ch.tlo, road.ax, road.az], [ch.thi, road.bx, road.bz]]) junction(t, x, z, w);
-    return [a, b];
-  };
-  // a street ending on another street or an avenue: the other one's lamps keep clear, a patch of plain asphalt
-  const junction = (t, x, z, w) => {
-    if (!t) return;
-    if (t.rid !== undefined) {
-      const o = L.roads[t.rid], ox = o.bx - o.ax, oz = o.bz - o.az, ol = Math.hypot(ox, oz);
-      const s = ((x - o.ax) * ox + (z - o.az) * oz) / ol;
-      o.junc.push(s);
-      const nx = -oz / ol, nz = ox / ol, side = Math.sign((x - o.ax) * nx + (z - o.az) * nz) || 1;
-      L.patches.push({ x: x - nx * side * o.w / 2, z: z - nz * side * o.w / 2, r: Math.max(w, o.w) * 0.62 });
-    } else if (t.side) {
-      const pos = t.side[0] === 'x' ? z : x;
-      L.edgeJ[t.side].push({ pos, w });
-      const px = t.side === 'x0' ? x - half : t.side === 'x1' ? x + half : x, pz = t.side === 'z0' ? z - half : t.side === 'z1' ? z + half : z;
-      L.patches.push({ x: px, z: pz, r: Math.max(w, AVE.w) * 0.55 });
+  if (sb.kind === 'park' || sb.river) { L.blocks.push({ poly: rect(X0, Z0, X1, Z1) }); finishBlocks(sb, L); return L; }
+  const G = GRID[sb.kind] || GRID.residential, w = G.w, rng = mulberry32(sb.seed ^ 0x2545f491);
+  // residential blocks are 60 or 120 m deep, by neighbourhood (a slow field, so neighbours agree)
+  const sz = sb.kind === 'residential' && vnoise(sb.cx / 2800 + 61.3, sb.cz / 2800 - 7.7) > 0.52 ? 120 : G.sz;
+  // street centre lines; xs / zs also hold the avenue edges at both ends
+  const vx = latticeLines(X0, X1, G.sx, lineX, 105, G.keep), hz = latticeLines(Z0, Z1, sz, lineZ, 107, G.keep);
+  const xs = [X0, ...vx, X1], zs = [Z0, ...hz, Z1], nx = xs.length - 1, nz = zs.length - 1;
+  // cells (a, b) between them; joining two cells removes the street segment between them
+  const cell = (a, b) => b * nx + a, taken = new Int32Array(nx * nz).fill(-1);
+  const goneV = new Set(), goneH = new Set();   // vertical segment (line i, row b) "i,b"; horizontal (line j, column a) "j,a"
+  const rects = [];
+  const order = [];
+  for (let b = 0; b < nz; b++) for (let a = 0; a < nx; a++) order.push([a, b, rng()]);
+  order.sort((p, q) => p[2] - q[2]);
+  for (const [a, b] of order) {
+    if (taken[cell(a, b)] >= 0) continue;
+    const r = rng(), id = rects.length;
+    let a1 = a, b1 = b;
+    if (r < G.join * 0.2 && a + 1 < nx && b + 1 < nz && [cell(a + 1, b), cell(a, b + 1), cell(a + 1, b + 1)].every((c) => taken[c] < 0)) {
+      a1 = a + 1; b1 = b + 1;   // a big block (a mall, a hospital, a park): four joined
+      goneV.add(a + 1 + ',' + b); goneV.add(a + 1 + ',' + (b + 1)); goneH.add(b + 1 + ',' + a); goneH.add(b + 1 + ',' + (a + 1));
+    } else if (r < G.join) {
+      // join across the shorter side, so the joined block is squarer, not a long strip
+      const cw = xs[a + 1] - xs[a], ch = zs[b + 1] - zs[b], rightOk = a + 1 < nx && taken[cell(a + 1, b)] < 0, downOk = b + 1 < nz && taken[cell(a, b + 1)] < 0;
+      const across = cw <= ch ? (rightOk ? 'r' : null) : (downOk ? 'd' : null);
+      if (across === 'r') { a1 = a + 1; goneV.add(a + 1 + ',' + b); }
+      else if (across === 'd') { b1 = b + 1; goneH.add(b + 1 + ',' + a); }
     }
-  };
-  // ---- the first cuts that give each style its shape ----
-  let polys = [rect(X0, Z0, X1, Z1)], frame = 0;
-  if (style === 'rotated') frame = R(0.26, 0.6) * (rng() < 0.5 ? -1 : 1);
-  if (style === 'diagonal') {
-    const ang = R(0.6, 0.97) * (rng() < 0.5 ? -1 : 1), cx = sb.cx + R(-40, 40), cz = sb.cz + R(-40, 40);
-    const res = cut(polys[0], cx, cz, Math.cos(ang), Math.sin(ang), S.w + 4, 'boulevard');
-    if (res) polys = res;
+    for (let bb = b; bb <= b1; bb++) for (let aa = a; aa <= a1; aa++) taken[cell(aa, bb)] = id;
+    rects.push([a, b, a1, b1]);
   }
-  if (style === 'radial') {
-    const cx = sb.cx + R(-35, 35), cz = sb.cz + R(-35, 35), n = rng() < 0.5 ? 2 : 3, a0 = R(0, Math.PI), rr = R(18, 26);
-    for (let k = 0; k < n; k++) {
-      const a = a0 + (k * Math.PI) / n, dx = Math.cos(a), dz = Math.sin(a), next = [];
-      for (const p of polys) { const res = cut(p, cx, cz, dx, dz, S.w); if (res) next.push(...res); else next.push(p); }
-      polys = next;
-    }
-    // the roundabout: the wedges stop short of its ring
-    polys = polys.map((p) => {
-      const c = polyCentroid(p), dx = c.x - cx, dz = c.z - cz, dl = Math.hypot(dx, dz) || 1;
-      return clipPoly(p, cx, cz, dx / dl, dz / dl, rr + S.w / 2 + 2, { ring: true });
-    }).filter(Boolean);
-    L.round = { x: cx, z: cz, r: rr, w: S.w };
-    // the radial streets start at the ring
-    for (const road of L.roads) {
-      const dx = road.bx - road.ax, dz = road.bz - road.az, dl = Math.hypot(dx, dz), s = ((cx - road.ax) * dx + (cz - road.az) * dz) / dl;
-      road.split = [s - rr, s + rr];
-    }
-    frame = a0;
+  for (const [a, b, a1, b1] of rects) {
+    const x0 = a === 0 ? xs[0] : xs[a] + w / 2, x1 = a1 + 1 === nx ? xs[nx] : xs[a1 + 1] - w / 2;
+    const z0 = b === 0 ? zs[0] : zs[b] + w / 2, z1 = b1 + 1 === nz ? zs[nz] : zs[b1 + 1] - w / 2;
+    L.blocks.push({ poly: rect(x0, z0, x1, z1) });
   }
-  // ---- then smaller streets, recursively, until the blocks are the size this district likes ----
-  const org = style === 'organic';
-  const rec = (poly, depth) => {
-    const A = Math.abs(polyArea(poly));
-    const ux = Math.cos(frame), uz = Math.sin(frame);
-    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
-    for (const p of poly) { const u = p.x * ux + p.z * uz, v = -p.x * uz + p.z * ux; u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v); }
-    const lu = u1 - u0, lv = v1 - v0;
-    const target = S.area * R(0.55, 1.5);
-    if (depth > 9 || A < target || Math.min(lu, lv) < S.side * 2 + S.w) { L.blocks.push({ poly }); return; }
-    if (depth >= 2 && A < target * 2.6 && rng() < (org ? 0.05 : 0.1)) { L.blocks.push({ poly, big: true }); return; }
-    // cut across the longer side, somewhere near its middle
-    const alongU = lu >= lv, f = R(0.36, 0.64), jit = org ? R(-0.4, 0.4) : 0;
-    const pu = alongU ? u0 + lu * f : (u0 + u1) / 2, pv = alongU ? (v0 + v1) / 2 : v0 + lv * f;
-    const px = pu * ux - pv * uz, pz = pu * uz + pv * ux;
-    const ang = frame + (alongU ? Math.PI / 2 : 0) + jit;
-    const w = org ? S.w * R(0.8, 1.15) : S.w;
-    const res = cut(poly, px, pz, Math.cos(ang), Math.sin(ang), w, 'street', S.side * S.side * 0.8);
-    if (!res) { L.blocks.push({ poly }); return; }   // the street would leave a sliver
-    rec(res[0], depth + 1); rec(res[1], depth + 1);
-  };
-  for (const p of polys) rec(p, 0);
+  // the streets: runs of segments still there, along each line
+  const vHas = (i, b) => i > 0 && i < nx && b >= 0 && b < nz && !goneV.has(i + ',' + b);
+  const hHas = (j, a) => j > 0 && j < nz && a >= 0 && a < nx && !goneH.has(j + ',' + a);
+  for (let i = 1; i < nx; i++)
+    for (let b = 0; b < nz;) {
+      if (!vHas(i, b)) { b++; continue; }
+      let e = b;
+      while (vHas(i, e + 1)) e++;
+      const road = { ax: xs[i], az: zs[b], bx: xs[i], bz: zs[e + 1], w, kind: 'street', junc: [] };
+      for (let j = b; j <= e + 1; j++) if (j > 0 && j < nz && (hHas(j, i - 1) || hHas(j, i))) road.junc.push(zs[j] - zs[b]);
+      L.roads.push(road);
+      if (b === 0) { L.edgeJ.z0.push({ pos: xs[i], w }); L.crossings.push({ x: xs[i], z: sb.z0, wx: w, wz: AVE.w }); }
+      if (e + 1 === nz) { L.edgeJ.z1.push({ pos: xs[i], w }); L.crossings.push({ x: xs[i], z: sb.z1, wx: w, wz: AVE.w }); }
+      b = e + 1;
+    }
+  for (let j = 1; j < nz; j++)
+    for (let a = 0; a < nx;) {
+      if (!hHas(j, a)) { a++; continue; }
+      let e = a;
+      while (hHas(j, e + 1)) e++;
+      const road = { ax: xs[a], az: zs[j], bx: xs[e + 1], bz: zs[j], w, kind: 'street', junc: [] };
+      for (let i = a; i <= e + 1; i++) if (i > 0 && i < nx && (vHas(i, j - 1) || vHas(i, j))) road.junc.push(xs[i] - xs[a]);
+      L.roads.push(road);
+      if (a === 0) { L.edgeJ.x0.push({ pos: zs[j], w }); L.crossings.push({ x: sb.x0, z: zs[j], wx: AVE.w, wz: w }); }
+      if (e + 1 === nx) { L.edgeJ.x1.push({ pos: zs[j], w }); L.crossings.push({ x: sb.x1, z: zs[j], wx: AVE.w, wz: w }); }
+      a = e + 1;
+    }
+  // where streets meet inside: a crossing (with zebra crossings), at junctions and T junctions alike
+  for (let i = 1; i < nx; i++)
+    for (let j = 1; j < nz; j++) {
+      const v = vHas(i, j - 1) || vHas(i, j), h = hHas(j, i - 1) || hHas(j, i);
+      if (v && h) L.crossings.push({ x: xs[i], z: zs[j], wx: w, wz: w });
+    }
   finishBlocks(sb, L);
   return L;
 }
 function rect(x0, z0, x1, z1) {
   return [{ x: x0, z: z0, t: { side: 'z0' } }, { x: x1, z: z0, t: { side: 'x1' } }, { x: x1, z: z1, t: { side: 'z1' } }, { x: x0, z: z1, t: { side: 'x0' } }];
 }
-// each block: its centre (which piece owns it), its seed, the angle its buildings line up with
+// each block: its centre (which piece owns it), its seed; blocks line up with the avenues
 function finishBlocks(sb, L) {
   L.blocks.forEach((b, i) => {
     const c = polyCentroid(b.poly);
     b.cx = c.x; b.cz = c.z;
     b.seed = pcg((sb.seed ^ pcg(i * 131 + 7)) >>> 0);
-    let a = longestEdgeAngle(b.poly);
-    a = ((a % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
-    if (a > Math.PI / 4) a -= Math.PI / 2;
-    b.angle = Math.abs(a) < 0.02 ? 0 : a;
+    b.angle = 0;
+    b.sbKind = sb.kind;
   });
-}
-
-// ---------- the suburbs: a winding street across, side streets ending in cul-de-sacs, houses along them ----------
-function curvySuburb(sb, L, rng, X0, Z0, X1, Z1, w) {
-  const R = (a, b) => a + (b - a) * rng(), M = 6;
-  const inRect = (x, z, m) => x > X0 + m && x < X1 - m && z > Z0 + m && z < Z1 - m;
-  const lines = [];   // every street's points, for keeping houses and streets apart
-  const addStreet = (pts, ends) => {
-    const id = L.roads.length;
-    L.roads.push({ pts, w, kind: 'curvy', junc: [], ends });
-    lines.push(pts);
-    return id;
-  };
-  const near = (x, z, d, skip) => {
-    for (let k = 0; k < lines.length; k++) {
-      if (k === skip) continue;
-      for (const p of lines[k]) if (Math.abs(p.x - x) < d && Math.abs(p.z - z) < d && Math.hypot(p.x - x, p.z - z) < d) return true;
-    }
-    return false;
-  };
-  // the spine: across the superblock, west to east or north to south, in long bends
-  const ew = rng() < 0.5, span = ew ? X1 - X0 : Z1 - Z0, cross = ew ? Z1 - Z0 : X1 - X0;
-  const mid = (ew ? (Z0 + Z1) / 2 : (X0 + X1) / 2) + R(-0.15, 0.15) * cross, amp = R(0.12, 0.22) * cross, per = R(0.7, 1.3), ph = R(0, 6.28);
-  const spine = [];
-  for (let s = 0; s <= span + 0.01; s += 8) {
-    const a = s / span, o = mid + amp * Math.sin(a * Math.PI * 2 * per + ph) * Math.sin(a * Math.PI);
-    spine.push(ew ? { x: X0 + s, z: o } : { x: o, z: Z0 + s });
-  }
-  const sp = addStreet(spine, [ew ? 'x0' : 'z0', ew ? 'x1' : 'z1']);
-  L.edgeJ[ew ? 'x0' : 'z0'].push({ pos: ew ? spine[0].z : spine[0].x, w });
-  L.edgeJ[ew ? 'x1' : 'z1'].push({ pos: ew ? spine[spine.length - 1].z : spine[spine.length - 1].x, w });
-  for (const p of [spine[0], spine[spine.length - 1]]) L.patches.push({ x: p.x + (ew ? (p === spine[0] ? -AVE.w / 2 : AVE.w / 2) : 0), z: p.z + (ew ? 0 : p === spine[0] ? -AVE.w / 2 : AVE.w / 2), r: AVE.w * 0.55 });
-  // side streets, alternating sides, wandering off and ending in a turning circle
-  let side = rng() < 0.5 ? 1 : -1;
-  for (let i = 6 + Math.floor(R(0, 4)); i < spine.length - 6; i += 9 + Math.floor(R(0, 5))) {
-    side = -side;
-    const p = spine[i], q = spine[i + 1], tx = q.x - p.x, tz = q.z - p.z, tl = Math.hypot(tx, tz);
-    let hx = (-tz / tl) * side, hz = (tx / tl) * side, x = p.x + hx * w / 2, z = p.z + hz * w / 2;
-    const pts = [{ x, z }], len = R(70, 150), turn = R(-0.012, 0.012);
-    let ok = true, bend = 0;
-    for (let s = 8; s <= len; s += 8) {
-      bend += turn + R(-0.004, 0.004);
-      const c = Math.cos(bend * 8), sn = Math.sin(bend * 8);
-      const nhx = hx * c - hz * sn, nhz = hx * sn + hz * c; hx = nhx; hz = nhz;
-      x += hx * 8; z += hz * 8;
-      if (!inRect(x, z, 22) || near(x, z, 36, sp) || (pts.length > 3 && near(x, z, 36, -1))) { ok = pts.length > 5; break; }
-      pts.push({ x, z });
-    }
-    if (!ok || pts.length < 5) continue;
-    const id = addStreet(pts, [null, 'circle']);
-    L.roads[sp].junc.push(i);   // (curvy streets count junctions by point)
-    L.patches.push({ x: p.x, z: p.z, r: w * 0.7 });
-    const e = pts[pts.length - 1];
-    L.patches.push({ x: e.x, z: e.z, r: 9.5, circle: true });
-    void id;
-  }
-  // houses along every street, facing it, on both sides, clear of the other streets and of each other
-  const placed = [];
-  for (let k = 0; k < L.roads.length; k++) {
-    const pts = L.roads[k].pts;
-    for (const sd of [-1, 1]) {
-      for (let i = 1; i + 1 < pts.length; i += 2 + (rng() < 0.3 ? 1 : 0)) {
-        const p = pts[i], q = pts[i + 1], tx = q.x - p.x, tz = q.z - p.z, tl = Math.hypot(tx, tz);
-        const nx = (-tz / tl) * sd, nz = (tx / tl) * sd, hw = R(4.2, 6), hd = R(3.6, 5), set = R(4, 7);
-        const cx = p.x + nx * (w / 2 + set + hd), cz = p.z + nz * (w / 2 + set + hd);
-        if (!inRect(cx, cz, M + Math.max(hw, hd))) continue;
-        // clear of the other streets, and of its own street where it bends back
-        if (lines.some((ln, j) => ln.some((pp, m) => (j !== k || Math.abs(m - i) > 3) && Math.hypot(pp.x - cx, pp.z - cz) < w / 2 + hd + 4))) continue;
-        if (L.patches.some((c) => c.circle && Math.hypot(c.x - cx, c.z - cz) < c.r + hd + 3)) continue;
-        if (placed.some((h) => Math.hypot(h.x - cx, h.z - cz) < Math.max(h.hw, h.hd) + Math.max(hw, hd) + 3)) continue;
-        // the house's local +z faces the street
-        const yaw = Math.atan2(-nx, -nz);
-        const h = { x: cx, z: cz, yaw, hw, hd, H: rng() < 0.3 ? R(6, 7) : R(3.2, 3.6), seed: pcg((sb.seed ^ pcg(placed.length * 97 + 13)) >>> 0) };
-        placed.push(h);
-      }
-    }
-  }
-  // round the turning circles, a few more houses
-  for (const c of L.patches) {
-    if (!c.circle) continue;
-    for (let a = 0; a < 6.28; a += R(0.9, 1.3)) {
-      const hw = R(4.2, 5.5), hd = R(3.6, 4.6), d = c.r + 5 + hd, cx = c.x + Math.cos(a) * d, cz = c.z + Math.sin(a) * d;
-      if (!inRect(cx, cz, M + Math.max(hw, hd))) continue;
-      if (lines.some((ln) => ln.some((pp) => Math.hypot(pp.x - cx, pp.z - cz) < w / 2 + hd + 3))) continue;
-      if (placed.some((h) => Math.hypot(h.x - cx, h.z - cz) < Math.max(h.hw, h.hd) + Math.max(hw, hd) + 3)) continue;
-      placed.push({ x: cx, z: cz, yaw: Math.atan2(-Math.cos(a), -Math.sin(a)), hw, hd, H: R(3.2, 3.6), seed: pcg((sb.seed ^ pcg(placed.length * 97 + 13)) >>> 0) });
-    }
-  }
-  L.houses = placed;
-  // trees in the gardens and the space between
-  for (let k = 0; k < (X1 - X0) * (Z1 - Z0) / 260; k++) {
-    const x = R(X0 + 4, X1 - 4), z = R(Z0 + 4, Z1 - 4);
-    if (lines.some((ln) => ln.some((pp) => Math.abs(pp.x - x) < w / 2 + 3 && Math.abs(pp.z - z) < w / 2 + 3))) continue;
-    if (placed.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.hw, h.hd) + 2)) continue;
-    if (L.patches.some((c) => Math.hypot(c.x - x, c.z - z) < c.r + 2)) continue;
-    L.trees.push({ x, z, s: R(0.8, 1.5), c: rng() < 0.3 });
-  }
 }

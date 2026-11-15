@@ -76,24 +76,25 @@ fn rotZ(v: vec3f, a: f32) -> vec3f { let c = cos(a); let s = sin(a); return vec3
 
 // ---------- the rivers (the same formulas and hash as city.js) ----------
 fn ihf(a: i32, salt: u32) -> f32 { return rnd(bitcast<u32>(a) ^ pcg(salt)); }
-struct River { on: bool, zc: f32, a1: f32, f1: f32, p1: f32, a2: f32, f2: f32, p2: f32 };
+struct River { on: bool, zc: f32, hw: f32, a1: f32, f1: f32, p1: f32, a2: f32, f2: f32, p2: f32 };
 fn riverSlot(k: i32) -> River {
   var r: River;
-  if (k == 0) { r.on = true; r.zc = RIVER_Z0; r.a1 = 10.0; r.f1 = 0.0023; r.p1 = 0.7; r.a2 = 5.0; r.f2 = 0.0061; r.p2 = 0.0; return r; }
-  r.zc = RIVER_Z0 + f32(k) * RIVER_P + (ihf(k, 11u) - 0.5) * 800.0;
+  if (k == 0) { r.on = true; r.zc = RIVER_Z0; r.hw = RIVER_HW; r.a1 = 10.0; r.f1 = 0.0023; r.p1 = 0.7; r.a2 = 5.0; r.f2 = 0.0061; r.p2 = 0.0; return r; }
+  r.zc = RIVER_Z0 + f32(k) * RIVER_P + (ihf(k, 11u) - 0.5) * 1400.0;
   r.on = ihf(k, 12u) < 0.6;
+  r.hw = 40.0 + 18.0 * ihf(k, 19u);
   r.a1 = 6.0 + 8.0 * ihf(k, 13u); r.f1 = 0.0014 + 0.0016 * ihf(k, 14u); r.p1 = 6.2832 * ihf(k, 15u);
   r.a2 = 2.0 + 4.0 * ihf(k, 16u); r.f2 = 0.004 + 0.004 * ihf(k, 17u); r.p2 = 6.2832 * ihf(k, 18u);
   return r;
 }
-// how far (x, z) is from the line of the nearest river, across it
+// how far (x, z) is from the nearest river's bank (negative: in the water)
 fn riverDist(x: f32, z: f32) -> f32 {
   let r = riverSlot(i32(floor((z - RIVER_Z0) / RIVER_P + 0.5)));
   if (!r.on) { return 1e9; }
-  return abs(z - (r.zc + r.a1 * sin(x * r.f1 + r.p1) + r.a2 * sin(x * r.f2 + r.p2)));
+  return abs(z - (r.zc + r.a1 * sin(x * r.f1 + r.p1) + r.a2 * sin(x * r.f2 + r.p2))) - r.hw;
 }
 fn bridgeH(x: f32, z: f32) -> f32 {
-  let d = riverDist(x, z) - RIVER_HW; let k = clamp(1.0 - d / RAMP, 0.0, 1.0);
+  let d = riverDist(x, z); let k = clamp(1.0 - d / RAMP, 0.0, 1.0);
   return BRIDGE_H * k * k * (3.0 - 2.0 * k);
 }
 
@@ -546,7 +547,7 @@ fn suburbLights(w: vec3f) -> vec3f {
 }
 @fragment fn fs_ground(i: GO) -> @location(0) vec4f {
   let w = i.w;
-  if (riverDist(w.x, w.z) < RIVER_HW + 1.0) { discard; }
+  if (riverDist(w.x, w.z) < 1.0) { discard; }
   let V = normalize(w - u.cam.xyz);
   let n = vec3f(0.0, 1.0, 0.0);
   let uv = w.xz / SPAN;

@@ -15,9 +15,9 @@ with **WebGPU** (Chrome or Edge on desktop).
 - An endless city: it is generated around you as you fly, so it never runs out, and every place is always the same.
   Different districts give each part its own feel: downtowns with towers and searchlights, old town with narrow
   streets and neon, docks with cranes, containers and ships, industrial zones, quiet suburbs, parks, and rivers with bridges.
-- Streets that vary: between the avenues, each part of town has its own network: irregular grids with T junctions,
-  grids turned at an angle, diagonal boulevards, roundabouts, crooked old-town lanes, and winding suburban streets
-  with cul-de-sacs. Blocks come in all shapes, and buildings line up with their street.
+- Streets that vary: a believable city grid, not a checkerboard. Block sizes follow the district (small old-town
+  blocks, long residential blocks, big industrial lots), some streets stop at T junctions, some blocks are merged,
+  and there are pocket parks, parking lots and tree-lined boulevards with planted medians.
 - Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.
 - Analog or digital video, chosen in the menu: analog has the snow and rolling lines of a real analog link, digital is

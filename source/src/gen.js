@@ -243,8 +243,10 @@ function blockMix(x, z) {
 // what a block becomes (the same draw for the piece that builds it and the ones that paint its ground)
 function blockKind(blk) {
   const mx = blockMix(blk.cx, blk.cz);
+  if (ih(blk.seed, 94) < 0.045 && mx.c < 0.35) return 'park';   // now and then a square or a small park
   if (ih(blk.seed, 91) < mx.ind) return 'industrial';
-  if (ih(blk.seed, 92) < mx.sub) return 'houses';
+  // in the suburbs nearly every block is houses (a few shops and flats among them)
+  if (ih(blk.seed, 92) < (blk.sbKind === 'suburb' ? Math.max(mx.sub, 0.88) : mx.sub)) return 'houses';
   if (ih(blk.seed, 93) < mx.old) return 'old';
   return 'apartments';
 }
@@ -252,7 +254,8 @@ function blockKind(blk) {
 function blockGround(K, blk) {
   const kind = blockKind(blk), pts = blk.poly.map((p) => [p.x, p.z]);
   K.layPoly(pts, kind === 'industrial' ? 0 : 8);
-  if (kind === 'houses') { const inner = insetPoly(blk.poly, 3.6); if (inner) K.layPoly(inner.map((p) => [p.x, p.z]), 2); }
+  if (kind === 'houses' || kind === 'park') { const inner = insetPoly(blk.poly, 3.6); if (inner) K.layPoly(inner.map((p) => [p.x, p.z]), 2); }
+  if (kind === 'park') { const c = polyBox(blk.poly); K.layRect((c.x0 + c.x1) / 2 - 1.6, c.z0 + 3.6, (c.x0 + c.x1) / 2 + 1.6, c.z1 - 3.6, 8); K.layRect(c.x0 + 3.6, (c.z0 + c.z1) / 2 - 1.6, c.x1 - 3.6, (c.z0 + c.z1) / 2 + 1.6, 8); }
 }
 // a kerb along every edge of a block, and the edge's direction inwards
 function kerbs(K, poly) {
@@ -305,11 +308,12 @@ function genBlock(K, sb, blk) {
     if (Math.abs(polyArea(blk.poly)) > 60) K.tree(blk.cx, blk.cz, Rd(0.8, 1.2));
     return null;
   }
+  if (kind === 'park') { pocketPark(K, inner, lampColor(sb)); return null; }
   // apartments: towers downtown, falling off smoothly towards the suburbs
   const old = kind === 'old', lc = lampColor(sb);
   const resH = (16 + vnoise(blk.cx * 0.006, blk.cz * 0.006) * 22) * (1 - 0.6 * mx.sub);
   const towers = 12 + 320 * Math.pow(c, 1.5) + vnoise(blk.cx * 0.01, blk.cz * 0.01) * 12;
-  const H0 = old ? 17 + vnoise(blk.cx * 0.02, blk.cz * 0.02) * 8 : Math.max(resH, towers);
+  const H0 = old ? 12 + vnoise(blk.cx * 0.02, blk.cz * 0.02) * 6 : Math.max(resH, towers);
   const trees = kind === 'apartments' && H0 < 70;
   if (trees && rd() < 0.8) alongEdges(blk.poly, 1.6, 13, (x, z) => { if (rd() < 0.8 * Q.trees) K.tree(x + Rd(-1, 1), z + Rd(-1, 1), Rd(0.8, 1.1)); });
   // the block's own frame: local x along its longest street
@@ -366,6 +370,8 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
     let H = H0 * (0.3 + 0.95 * Math.pow(r2, 1.3));
     if (H0 > 120 && r3 < 0.06) H *= 1.4;
     H = Math.max(Math.min(H, Math.max(w, d) * 7.5), old ? 9 + r4 * 3 : 7 + r4 * 6);
+    // low-rise where it should be: old town, and next to the houses
+    H = Math.min(H, old || sb.kind === 'oldtown' ? 18 : sb.kind === 'suburb' || sub > 0.5 ? 10 : sub > 0.25 ? 16 : Infinity);
     const g = old ? 0 : H0 > 60 ? 1.5 + r5 * 2.5 : r5 < 0.5 ? 0 : 1 + r5 * 1.5;
     const opt = { ...styleOpt };
     if (old) opt.shop = clamp(nl + R(-0.2, 0.3), 0.2, 1);
@@ -377,6 +383,20 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
     }
   }
   return tallest;
+}
+
+// a small park in one block: lawn, two crossing paths with lamps, trees round the edge, a bench or two
+function pocketPark(K, inner, lc) {
+  const { G, rd, Rd, Q } = K, b = polyBox(inner), cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
+  for (let x = b.x0 + 4; x < b.x1 - 3; x += 9) for (const z of [b.z0 + 3, b.z1 - 3]) if (rd() < 0.85 * Q.trees + 0.15) K.tree(x + Rd(-1, 1), z, Rd(0.9, 1.3));
+  for (let z = b.z0 + 12; z < b.z1 - 10; z += 9) for (const x of [b.x0 + 3, b.x1 - 3]) if (rd() < 0.85 * Q.trees + 0.15) K.tree(x, z + Rd(-1, 1), Rd(0.9, 1.3));
+  for (const [x, z] of [[cx + 6, cz + 6], [cx - 6, cz - 6], [cx + 6, cz - 6], [cx - 6, cz + 6]]) {
+    if (K.full) { K.basic(G.cyl, TM.box(x, 2, z, 0.14, 4, 0.14), [0.05, 0.05, 0.06]); K.emissive(G.sphere, TM.box(x, 4.2, z, 0.55, 0.55, 0.55), lc, 2.5); }
+    K.sprite(x, 4.2, z, lc, 4, 0.7);
+    K.splat(x, z, lc[0] * 0.75, lc[1] * 0.75, lc[2] * 0.75, 6);
+  }
+  if (K.full) for (const [x, z, a] of [[cx + 3.5, cz + 9, 0], [cx - 9, cz - 3.5, Math.PI / 2]]) K.basic(G.cube, TM.yaw(x, 0.45, z, 1.8, 0.12, 0.5, a), [0.25, 0.16, 0.1]);
+  K.basic(G.cyl, TM.box(cx, 0.35, cz, 3.2, 0.7, 3.2), [0.3, 0.29, 0.28]);
 }
 
 function plaza(K, x0, z0, x1, z1, lc) {
@@ -533,7 +553,8 @@ function houseLots(K, lp, bx, placed) {
     if (!lot) continue;
     const w = lot.x1 - lot.x0, d = lot.z1 - lot.z0;
     if (w < 9 || d < 9) continue;
-    if (r < 0.12) { K.tree((lot.x0 + lot.x1) / 2, (lot.z0 + lot.z1) / 2, Rd(1, 1.5), rd() < 0.4); continue; }
+    // a lot with no street in front is a back garden
+    if (r < 0.12 || !lot.sides) { K.tree((lot.x0 + lot.x1) / 2, (lot.z0 + lot.z1) / 2, Rd(1, 1.5), rd() < 0.4); continue; }
     const hw = Math.min(w - 4, hwR) / 2, hd = Math.min(d - 4, hdR) / 2, cx = (lot.x0 + lot.x1) / 2 + j1, cz = (lot.z0 + lot.z1) / 2 + j2;
     house(K, cx, cz, hw, hd, Hh, style, houseWall(K, style));
     placed.push(lot);
@@ -551,14 +572,14 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
   // embankment walls and promenade lamps, owned by position
   for (let x = Math.ceil(Math.max(x0, X0) / 8) * 8; x < Math.min(x1, X1); x += 8)
     for (const s of [-1, 1]) {
-      const za = rz(x) + s * (RIVER.hw + 0.75), zb = rz(x + 8) + s * (RIVER.hw + 0.75), zc = (za + zb) / 2;
+      const za = rz(x) + s * (r.hw + 0.75), zb = rz(x + 8) + s * (r.hw + 0.75), zc = (za + zb) / 2;
       if (zc < Z0 || zc >= Z1) continue;
       K.basic(G.cube, TM.yaw(x + 4, -1.2, zc, 8.3, 4.0, 1.5, -Math.atan2(zb - za, 8)), [0.12, 0.11, 0.1]);
     }
   if (sb.kind === 'riverside') {
     for (let x = Math.ceil((Math.max(x0, X0) - 8) / 24) * 24 + 8; x < Math.min(x1 - 4, X1); x += 24)
       for (const s of [-1, 1]) {
-        const z = rz(x) + s * (RIVER.hw + 3);
+        const z = rz(x) + s * (r.hw + 3);
         if (z < Z0 || z >= Z1 || x < x0 + 4) continue;
         if (K.full) { K.basic(G.cyl, TM.box(x, 2.2, z, 0.16, 4.4, 0.16), [0.05, 0.05, 0.06]); K.emissive(G.sphere, TM.box(x, 4.6, z, 0.6, 0.6, 0.6), LAMP, 2.5); }
         K.sprite(x, 4.6, z, LAMP, 4.5, 0.7);
@@ -574,12 +595,12 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
   if (sb.kind === 'riverside') {
     for (let k = 0, n = ((x1 - x0) / 9) * Q.trees; k < n; k++) {
       const x = Rd(x0 + 3, x1 - 3), s = rd() < 0.5 ? -1 : 1, zr = rz(x);
-      const z = s < 0 ? Rd(z0 + 7, zr - RIVER.hw - 14) : Rd(zr + RIVER.hw + 14, z1 - 7);
+      const z = s < 0 ? Rd(z0 + 7, zr - r.hw - 14) : Rd(zr + r.hw + 14, z1 - 7);
       K.tree(x, z, Rd(0.9, 1.4), rd() < 0.2);
     }
     const wheelHere = r.k === 0 ? x0 < 430 && x1 > 430 : ih(sb.seed, 44) < 0.12;
     if (wheelHere) {
-      const px = (x0 + x1) / 2, pz = (z0 + 4 + rz(px) - RIVER.hw - 11) / 2;
+      const px = (x0 + x1) / 2, pz = (z0 + 4 + rz(px) - r.hw - 11) / 2;
       ferrisWheel(K, px, pz);
       K.marks.push({ type: 'wheel', x: px, y: 38, z: pz });
     }
@@ -587,7 +608,7 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
   }
   // docks: quays both sides, container stacks, gantry cranes along the water, a ship or two
   for (const s of [-1, 1]) {
-    const edge = (x) => rz(x) + s * (RIVER.hw + 1.5), back = s < 0 ? z0 + 6 : z1 - 6;
+    const edge = (x) => rz(x) + s * (r.hw + 1.5), back = s < 0 ? z0 + 6 : z1 - 6;
     // gantry cranes on the quay edge
     for (let x = x0 + 30; x < x1 - 30; x += R(70, 110)) {
       const zq = edge(x), zi = zq - s * 26, h = R(38, 48), col = pick([[0.75, 0.2, 0.08], [0.15, 0.35, 0.6], [0.8, 0.6, 0.1]]);
@@ -614,7 +635,7 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
     }
     // a ship moored at the quay, clear of the bridges
     if (K.rng() < 0.7 && x1 - x0 > 240) {
-      const L = R(110, Math.min(170, x1 - x0 - 90)), cx = (x0 + x1) / 2 + R(-20, 20), zc = rz(cx) + s * (RIVER.hw - 12);
+      const L = R(110, Math.min(170, x1 - x0 - 90)), cx = (x0 + x1) / 2 + R(-20, 20), zc = rz(cx) + s * (r.hw - 12);
       const hull = pick([[0.12, 0.13, 0.15], [0.35, 0.08, 0.06], [0.08, 0.15, 0.25]]);
       K.basic(G.cube, TM.box(cx, 2, zc, L, 9, 16), hull);
       K.collider(cx - L / 2, -3, zc - 8, cx + L / 2, 6.5, zc + 8);
@@ -687,13 +708,11 @@ function streetPiece(K, ax, az, bx, bz, w, lanesN, extra = 0) {
   const dx = bx - ax, dz = bz - az, L = Math.hypot(dx, dz);
   K.G.cube.push(TM.yaw((ax + bx) / 2, ROADY - 0.15, (az + bz) / 2, L + extra, 0.3, w, Math.atan2(-dz, dx)), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, w, lanesN, 0]);
 }
-// plain asphalt, round, over the markings where streets meet (a little above the strips)
-function asphaltDisc(K, x, z, r) { K.G.cyl.push(TM.box(x, ROADY - 0.13, z, r * 2, 0.3, r * 2), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, r * 2, r * 2, 2]); }
 // a straight street: its pieces (each owned by the piece of city its middle is in), lamps both
 // sides on its own lattice, cars parked along the kerbs, clear of every junction
 function straightStreet(K, road, own, lc, step, seed) {
   const dx = road.bx - road.ax, dz = road.bz - road.az, len = Math.hypot(dx, dz), ux = dx / len, uz = dz / len, nx = -uz, nz = ux;
-  const lanesN = road.kind === 'boulevard' ? 2 : 1, at = (s, o) => [road.ax + ux * s + nx * o, road.az + uz * s + nz * o];
+  const lanesN = 1, at = (s, o) => [road.ax + ux * s + nx * o, road.az + uz * s + nz * o];
   const gap = road.split, inGap = (s, m) => gap && s > gap[0] - m && s < gap[1] + m;
   const n = Math.max(1, Math.ceil(len / 32));
   for (let k = 0; k < n; k++) {
@@ -726,53 +745,6 @@ function straightStreet(K, road, own, lc, step, seed) {
     }
   }
 }
-// a winding street through the suburbs: short pieces between its points, lamps now and then
-function curvyStreet(K, road, own, lc) {
-  const P = road.pts;
-  for (let i = 0; i + 1 < P.length; i++) {
-    const a = P[i], b = P[i + 1], cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
-    if (own(cx, cz)) streetPiece(K, a.x, a.z, b.x, b.z, road.w, 1, road.w * 0.35);
-  }
-  for (let i = 3, sd = 1; i + 3 < P.length; i += 6, sd = -sd) {
-    if (road.junc.some((j) => Math.abs(i - j) < 2)) continue;
-    const a = P[i], b = P[i + 1], tx = b.x - a.x, tz = b.z - a.z, tl = Math.hypot(tx, tz), nx = -tz / tl, nz = tx / tl;
-    const x = a.x + nx * sd * (road.w / 2 + 0.8), z = a.z + nz * sd * (road.w / 2 + 0.8);
-    if (own(x, z)) K.streetLamp(x, z, -nx * sd, -nz * sd, lc, 6);
-  }
-}
-// the roundabout: a disc of asphalt, an island with a lit fountain, lamps round it
-function roundabout(K, R, lc) {
-  const { G } = K;
-  asphaltDisc(K, R.x, R.z, R.r + R.w / 2 + 2);
-  const ir = R.r - R.w / 2;
-  K.basic(G.cyl, TM.box(R.x, 0.25, R.z, ir * 2, 0.5, ir * 2), [0.15, 0.145, 0.14]);
-  G.cyl.push(TM.box(R.x, 0.3, R.z, ir * 2 - 1, 0.5, ir * 2 - 1), [0.05, 0.09, 0.04, 0], [MAT.foliage, 0, K.seed(), 0]);
-  K.collider(R.x - ir * 0.7, 0, R.z - ir * 0.7, R.x + ir * 0.7, 0.55, R.z + ir * 0.7);
-  K.emissive(G.cyl, TM.box(R.x, 0.8, R.z, 6, 0.6, 6), [0.25, 0.55, 0.8], 0.8);
-  K.emissive(G.cyl, TM.box(R.x, 2.6, R.z, 0.7, 3.6, 0.7), [0.6, 0.85, 1.0], 1.6);
-  K.sprite(R.x, 4.6, R.z, [0.6, 0.85, 1.0], 6, 1.6);
-  K.splat(R.x, R.z, 0.3, 0.55, 0.8, 10);
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2 + 0.3, x = R.x + Math.cos(a) * (ir - 1.2), z = R.z + Math.sin(a) * (ir - 1.2);
-    K.streetLamp(x, z, Math.cos(a), Math.sin(a), lc, 6);
-  }
-  for (let k = 0; k < 4; k++) { const a = (k / 4) * Math.PI * 2; K.tree(R.x + Math.cos(a) * ir * 0.55, R.z + Math.sin(a) * ir * 0.55, 0.8); }
-}
-// a suburban house of a curvy layout (in world coordinates, facing its street)
-function suburbHouse(K, h) {
-  K.reseed(h.seed);
-  const style = K.rng() < 0.5 ? 0 : 2;
-  K.setFrame(h.x, h.z, h.yaw);
-  house(K, 0, 0, h.hw, h.hd, h.H, style, houseWall(K, style));
-  if (K.rd() < 0.35) K.splat(0, h.hd + 2.5, 0.35, 0.25, 0.15, 3);
-  if (K.full && K.rd() < 0.5) {   // a car in the drive
-    const col = K.pickd(CARS);
-    K.basic(K.G.cube, TM.box(h.hw + 2, 0.72, h.hd + 2.5, 1.86, 0.78, 4.4), col);
-    K.basic(K.G.cube, TM.box(h.hw + 2, 1.38, h.hd + 2.2, 1.62, 0.58, 2.3), [0.02, 0.022, 0.026]);
-  }
-  K.clearFrame();
-}
-
 // the strip of a road, clipped to the piece; lamps on a lattice so neighbours line up
 function roadStrip(K, axis, coord, w, lanesN, lo, hi) {
   if (hi - lo < 0.5) return;
@@ -793,9 +765,31 @@ function roadLamps(K, axis, coord, w, lo, hi, own, crosses, col, step) {
   }
 }
 
+// some avenues are boulevards: a raised median with trees and double lamps down the middle, broken
+// at the crossings with other avenues (the lanes either side, at 2.2 m and more, stay clear)
+const boulevardX = (i) => i !== 0 && !hasTrain(i) && ih(i, 63) < 0.3;
+const boulevardZ = (l) => l.kind === '' && ih2(l.k, l.m, 64) < 0.3;
+function median(K, axis, coord, lo, hi, own, lc, step) {
+  const a = lo + AVE.w / 2 + 3, b = hi - AVE.w / 2 - 3;
+  if (b - a < 10) return;
+  const n = Math.ceil((b - a) / 32), at = (s) => (axis === 0 ? [s, coord] : [coord, s]);
+  for (let k = 0; k < n; k++) {
+    const s0 = a + ((b - a) * k) / n, s1 = a + ((b - a) * (k + 1)) / n, [x, z] = at((s0 + s1) / 2);
+    if (!own(x, z)) continue;
+    K.basic(K.G.cube, axis === 0 ? TM.box(x, 0.12, z, s1 - s0, 0.24, 1.2) : TM.box(x, 0.12, z, 1.2, 0.24, s1 - s0), [0.15, 0.145, 0.14]);
+    if (K.full) K.push(K.G.cube, axis === 0 ? TM.box(x, 0.25, z, s1 - s0 - 0.4, 0.04, 0.8) : TM.box(x, 0.25, z, 0.8, 0.04, s1 - s0 - 0.4), [0.04, 0.07, 0.03, 0], [MAT.foliage, 0, K.seed(), 0]);
+  }
+  for (let s = Math.ceil(a / 16) * 16 + 8; s < b - 4; s += 16) {
+    const [x, z] = at(s);
+    if (!own(x, z)) continue;
+    if (Math.round(s / 16) % Math.max(1, Math.round(step / 16)) === 0) { K.streetLamp(x, z, axis === 0 ? 0 : 1, axis === 0 ? 1 : 0, lc, 8); K.streetLamp(x, z, axis === 0 ? 0 : -1, axis === 0 ? -1 : 0, lc, 8); }
+    else K.tree(x, z, 0.75);
+  }
+}
+
 // ---------- bridges and the elevated train ----------
 function bridge(K, x, r, w, grand, own) {
-  const { G } = K, W = w + 2.4, rz = riverZk(r, x), zA = rz - RIVER.hw - RIVER.ramp, zB = rz + RIVER.hw + RIVER.ramp;
+  const { G } = K, W = w + 2.4, rz = riverZk(r, x), zA = rz - r.hw - RIVER.ramp, zB = rz + r.hw + RIVER.ramp;
   const n = Math.ceil((zB - zA) / 5);
   for (let k = 0; k < n; k++) {
     const z0 = zA + ((zB - zA) * k) / n, z1 = zA + ((zB - zA) * (k + 1)) / n;
@@ -810,7 +804,7 @@ function bridge(K, x, r, w, grand, own) {
       for (const s of [-1, 1]) K.collider(x + s * (W / 2 - 0.15) - 0.15, yLo, z0, x + s * (W / 2 - 0.15) + 0.15, yHi + 1.0, z1);
     }
   }
-  for (let z = rz - RIVER.hw + 14; z < rz + RIVER.hw - 10; z += grand ? 200 : 30) {
+  for (let z = rz - r.hw + 14; z < rz + r.hw - 10; z += grand ? 200 : 30) {
     if (!own(x, z)) continue;
     K.basic(G.cyl, TM.box(x, (ROADY + RIVER.h - 1.2 - 3) / 2, z, 3.2, ROADY + RIVER.h - 1.2 + 3, 5), [0.1, 0.1, 0.1]);
     K.collider(x - 1.4, -3, z - 2.3, x + 1.4, ROADY + RIVER.h - 1.2, z + 2.3);
@@ -824,7 +818,7 @@ function bridge(K, x, r, w, grand, own) {
     }
   if (!grand || !own(x, rz)) return;
   // the suspension bridge: two towers, main cables strung with lights, suspenders down to the deck
-  const deckY = ROADY + RIVER.h, top = 58, zt = [rz - RIVER.hw + 10, rz + RIVER.hw - 10], legX = [x - W / 2 - 1.3, x + W / 2 + 1.3];
+  const deckY = ROADY + RIVER.h, top = 58, zt = [rz - r.hw + 10, rz + r.hw - 10], legX = [x - W / 2 - 1.3, x + W / 2 + 1.3];
   for (const z of zt) {
     for (const lxp of legX) { K.basic(G.cube, TM.box(lxp, (top - 3) / 2, z, 2.4, top + 3, 3.4), [0.2, 0.19, 0.2]); K.collider(lxp - 1.2, -3, z - 1.7, lxp + 1.2, top, z + 1.7); }
     for (const y of [deckY + 10, 40, top - 1]) { K.basic(G.cube, TM.box(x, y, z, W + 5, 2.2, 2.6), [0.2, 0.19, 0.2]); K.collider(x - (W + 5) / 2, y - 1.1, z - 1.3, x + (W + 5) / 2, y + 1.1, z + 1.3); }
@@ -920,7 +914,7 @@ function genChunk(cx, cz, lod, Q) {
       if (B.z < Z0 - 400 || A.z > Z1 + 400) continue;
       const r = A.kind === 'n' ? riverSlot(A.k) : null;
       if (r) {
-        const rz = riverZk(r, x), zA = rz - RIVER.hw - RIVER.ramp, zB = rz + RIVER.hw + RIVER.ramp;
+        const rz = riverZk(r, x), zA = rz - r.hw - RIVER.ramp, zB = rz + r.hw + RIVER.ramp;
         roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(zA, Z1));
         roadStrip(K, 1, x, AVE.w, 2, Math.max(zB, Z0), Math.min(B.z, Z1));
         bridge(K, x, r, AVE.w, (i === 0 && r.k === 0) || (i !== 0 && ih2(i, r.k, 62) < 0.1), own);
@@ -931,9 +925,10 @@ function genChunk(cx, cz, lod, Q) {
       for (const j of sbLayout(superblock(i, A, B)).edgeJ.x0) crosses.push(j);
       if (r) {
         const rz = riverZk(r, x);
-        roadLamps(K, 1, x, AVE.w, A.z, rz - RIVER.hw - RIVER.ramp, own, crosses, LAMP, step);
-        roadLamps(K, 1, x, AVE.w, rz + RIVER.hw + RIVER.ramp, B.z, own, crosses, LAMP, step);
+        roadLamps(K, 1, x, AVE.w, A.z, rz - r.hw - RIVER.ramp, own, crosses, LAMP, step);
+        roadLamps(K, 1, x, AVE.w, rz + r.hw + RIVER.ramp, B.z, own, crosses, LAMP, step);
       } else roadLamps(K, 1, x, AVE.w, A.z, B.z, own, crosses, lampColor(superblock(i, A, B)), step);
+      if (!r && boulevardX(i)) median(K, 1, x, A.z, B.z, own, lampColor(superblock(i, A, B)), step);
       lanes(K, 1, x, Math.max(A.z, Z0), Math.min(B.z, Z1));
     }
   }
@@ -958,6 +953,7 @@ function genChunk(cx, cz, lod, Q) {
       if (above) for (const j of sbLayout(superblock(xs[a].i, l, above)).edgeJ.z0) crosses.push(j);
       const sbN = above ? superblock(xs[a].i, l, above) : null;
       roadLamps(K, 0, l.z, AVE.w, xa, xb, own, crosses, sbN ? lampColor(sbN) : LAMP, step);
+      if (boulevardZ(l)) median(K, 0, l.z, xa, xb, own, sbN ? lampColor(sbN) : LAMP, step);
       lanes(K, 0, l.z, Math.max(xa, X0), Math.min(xb, X1));
       // crossings with the north-south avenues
       if (own(xa, l.z)) crossing(K, xa, l.z, AVE.w, AVE.w);
@@ -979,21 +975,13 @@ function genChunk(cx, cz, lod, Q) {
       continue;
     }
     const sstep = sb.kind === 'suburb' ? step * 2 : step;
-    if (L.style === 'curvy') {
-      if (near(rx0, rz0, rx1, rz1)) K.layRect(rx0, rz0, rx1, rz1, 2);
-      for (const road of L.roads) curvyStreet(K, road, own, lc);
-      for (const h of L.houses) if (own(h.x, h.z)) suburbHouse(K, h);
-      if (K.full) { K.reseed(sb.seed ^ 0x2c1b3c6d); for (const t of L.trees) { const s2 = K.Rd(0.9, 1.1); if (own(t.x, t.z)) K.tree(t.x, t.z, t.s * s2, t.c); } }
-    } else {
-      L.roads.forEach((road, k) => straightStreet(K, road, own, lc, sstep, pcg((sb.seed ^ pcg(k * 7 + 3)) >>> 0)));
-      for (const blk of L.blocks) {
-        const bb = polyBox(blk.poly);
-        if (near(bb.x0, bb.z0, bb.x1, bb.z1)) blockGround(K, blk);
-        if (own(blk.cx, blk.cz)) keep(genBlock(K, sb, blk));
-      }
-      if (L.round && own(L.round.x, L.round.z)) { K.reseed(sb.seed ^ 0x68e31da4); roundabout(K, L.round, lc); }
+    L.roads.forEach((road, k) => straightStreet(K, road, own, lc, sstep, pcg((sb.seed ^ pcg(k * 7 + 3)) >>> 0)));
+    for (const c of L.crossings) if (own(c.x, c.z)) crossing(K, c.x, c.z, c.wx, c.wz);
+    for (const blk of L.blocks) {
+      const bb = polyBox(blk.poly);
+      if (near(bb.x0, bb.z0, bb.x1, bb.z1)) blockGround(K, blk);
+      if (own(blk.cx, blk.cz)) keep(genBlock(K, sb, blk));
     }
-    for (const pt of L.patches) if (own(pt.x, pt.z)) asphaltDisc(K, pt.x, pt.z, pt.r);
   }
   // searchlights from the tallest tower downtown
   if (tallest && tallest.H > 150 && ih2(cx, cz, 71) < 0.6) {
@@ -1033,7 +1021,7 @@ function chunkMesh(boxes, X0, Z0) {
   }
   const X1 = X0 + CHUNK, Z1 = Z0 + CHUNK;
   const r = riverAt(Z0 + CHUNK / 2) || riverAt(Z0) || riverAt(Z1);
-  const hw = RIVER.hw + 0.5;
+  const hw = r ? r.hw + 0.5 : 0;
   const crosses = r && Math.max(r.zc - 30 - hw, Z0) < Math.min(r.zc + 30 + hw, Z1);
   if (!crosses) quad([X0, ROADY, Z0], [X0, ROADY, Z1], [X1, ROADY, Z1], [X1, ROADY, Z0], 0);
   else {
@@ -1110,7 +1098,7 @@ function chunkRaster(out) {
     if (!rv || Math.abs(wz - rv.zc) > RIVER.row) continue;
     for (let c = 0; c < TP; c++) {
       const wx = X0 + (c + 0.5) * TPX, d = Math.abs(wz - riverZk(rv, wx));
-      if (d > RIVER.hw && d < RIVER.hw + 11) lay[(r * TP + c) * 4] = 6;
+      if (d > rv.hw && d < rv.hw + 11) lay[(r * TP + c) * 4] = 6;
     }
   }
   const l16 = new Uint16Array(TP * TP * 3);

@@ -35,8 +35,8 @@ function riverSlot(k) {
   if (r) return r;
   // river 0 is Halvard Bay's own, where it always was
   r = k === 0
-    ? { k, zc: RIVER.z0, on: true, a1: 10, f1: 0.0023, p1: 0.7, a2: 5, f2: 0.0061, p2: 0 }
-    : { k, zc: RIVER.z0 + k * RIVER.period + (ih(k, 11) - 0.5) * 800, on: ih(k, 12) < 0.6,
+    ? { k, zc: RIVER.z0, on: true, hw: RIVER.hw, a1: 10, f1: 0.0023, p1: 0.7, a2: 5, f2: 0.0061, p2: 0 }
+    : { k, zc: RIVER.z0 + k * RIVER.period + (ih(k, 11) - 0.5) * 1400, on: ih(k, 12) < 0.6, hw: 40 + 18 * ih(k, 19),
         a1: 6 + 8 * ih(k, 13), f1: 0.0014 + 0.0016 * ih(k, 14), p1: 6.2832 * ih(k, 15),
         a2: 2 + 4 * ih(k, 16), f2: 0.004 + 0.004 * ih(k, 17), p2: 6.2832 * ih(k, 18) };
   if (riverCache.size > 64) riverCache.clear();
@@ -50,10 +50,10 @@ function riverZ(x, z) { const r = riverAt(z); return r ? riverZk(r, x) : null; }
 function bridgeH(x, z) {
   const r = riverAt(z);
   if (!r) return 0;
-  const d = Math.abs(z - riverZk(r, x)) - RIVER.hw, k = clamp(1 - d / RIVER.ramp, 0, 1);
+  const d = Math.abs(z - riverZk(r, x)) - r.hw, k = clamp(1 - d / RIVER.ramp, 0, 1);
   return RIVER.h * k * k * (3 - 2 * k);
 }
-function inRiver(x, z) { const r = riverAt(z); return !!r && Math.abs(z - riverZk(r, x)) < RIVER.hw + 0.5; }
+function inRiver(x, z) { const r = riverAt(z); return !!r && Math.abs(z - riverZk(r, x)) < r.hw + 0.5; }
 
 // ---------- the avenue grid ----------
 const aveX = (i) => (i === 0 ? AVE.x0 : AVE.x0 + i * AVE.period + (ih(i, 21) - 0.5) * 120);
@@ -179,10 +179,7 @@ function launchSpots() {
     let pos = [sb.cx, 3, sb.z0], dir = [1, 0];
     const L = sb.kind === 'docks' ? null : sbLayout(sb), road = L && L.roads[0];
     if (sb.kind === 'docks') pos = [sb.cx, 3, sb.z0 + AVE.w / 2 + 2];
-    else if (road && road.pts) {
-      const i = Math.floor(road.pts.length / 2), p = road.pts[i], q = road.pts[i + 1], l = Math.hypot(q.x - p.x, q.z - p.z);
-      pos = [p.x, 3, p.z]; dir = [(q.x - p.x) / l, (q.z - p.z) / l];
-    } else if (road) {
+    else if (road) {
       const l = Math.hypot(road.bx - road.ax, road.bz - road.az);
       pos = [(road.ax + road.bx) / 2, 3, (road.az + road.bz) / 2]; dir = [(road.bx - road.ax) / l, (road.bz - road.az) / l];
     }
