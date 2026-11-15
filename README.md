@@ -6,6 +6,8 @@ The quad is flown by **real Betaflight firmware** through [libfpv](https://githu
 so rates, PIDs, flight modes and the OSD work like on a real quad. The whole simulator is **one HTML file** and needs a browser
 with **WebGPU** (Chrome or Edge on desktop).
 
+### ▶ [Play it in your browser](https://panpi-loska.github.io/browser-fpv-simulator/)
+
 ## Features
 
 - Real Betaflight (2025.12) running at 1 kHz, with its CLI. Paste your quad's `diff all` to fly your own tune.
@@ -18,9 +20,15 @@ with **WebGPU** (Chrome or Edge on desktop).
 
 ## How to run
 
+**Online:** open https://panpi-loska.github.io/browser-fpv-simulator/ in Chrome or Edge and press **Fly**.
+
+**Locally:**
+
 1. Download [`index.html`](index.html).
 2. Serve the folder, for example with `python -m http.server`.
 3. Open `http://localhost:8000` in Chrome or Edge and press **Fly**.
+
+The first load downloads about 0.8 MB. If the page says WebGPU is missing, update your browser or turn on hardware acceleration.
 
 ## Using a radio
 
