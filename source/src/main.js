@@ -89,8 +89,9 @@ let spot = clamp(prefs.spot | 0, 0, spots.length - 1);
 progress(1, 'Ready');
 const audio = new Soundscape();
 let soundOn = prefs.sound !== false;
-audio.ambient = !!prefs.ambient;
-audio.town = true;
+// volumes in steps of 20%; the ambience is off (0) until asked for (an older "ambience on" counts as 60%)
+audio.vol.motors = clamp(prefs.volM ?? 0.8, 0, 1);
+audio.vol.ambient = clamp(prefs.volA ?? (prefs.ambient ? 0.6 : 0), 0, 1);
 
 // Reloading (a new detail level, a lost GPU): let go of the GPU and the sound first, so the new page
 // doesn't have to find memory while the old one still holds it. The same when the page is closed or refreshed.
@@ -201,7 +202,12 @@ function updateMenuButtons() {
   [...$('t').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', TIME_ORDER[i] === timeKey));
   [...$('r').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === raining));
   [...$('sg').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === unlimited));
-  [...$('am').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === audio.ambient));
+  [...$('so').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === soundOn));
+  $('gs').classList.toggle('off', !soundOn);
+  // a volume as the OSD would draw it: a bar of five cells
+  const bar = (v, zero) => (v <= 0 ? zero : '\u25AE'.repeat(Math.round(v * 5)) + '\u25AF'.repeat(5 - Math.round(v * 5)) + ' ' + Math.round(v * 100));
+  $('vm').querySelector('b').textContent = bar(audio.vol.motors, 'MUTE');
+  $('va').querySelector('b').textContent = bar(audio.vol.ambient, 'OFF');
 }
 function setTime(k) { timeKey = k; const p = loadPrefs(); p.time = k; savePrefs(p); updateMenuButtons(); }
 function setRain(on) { raining = on; applyWind(); const p = loadPrefs(); p.rain = on; savePrefs(p); updateMenuButtons(); }
@@ -233,13 +239,26 @@ $('cal').onclick = () => setTilt(core.uptilt - 5);
 $('car').onclick = () => setTilt(core.uptilt + 5);
 $('cad').onclick = () => { core.uptilt = -1; updateTilt(); };
 updateTilt();
-function setAmbient(on) { audio.ambient = on; const p = loadPrefs(); p.ambient = on; savePrefs(p); updateMenuButtons(); }
-function setSound(on) { soundOn = on; audio.setEnabled(on); const p = loadPrefs(); p.sound = on; savePrefs(p); }
+function setVolume(which, v) {
+  v = clamp(Math.round(v * 5) / 5, 0, 1);
+  audio.setVolume(which, v);
+  const p = loadPrefs(); p[which === 'motors' ? 'volM' : 'volA'] = v; delete p.ambient; savePrefs(p);
+  updateMenuButtons();
+}
+function setSound(on) { soundOn = on; audio.setEnabled(on); const p = loadPrefs(); p.sound = on; savePrefs(p); updateMenuButtons(); }
 [...$('t').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setTime(TIME_ORDER[i]); });
 [...$('r').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setRain(i === 1); });
 [...$('sg').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setRange(i === 1); });
-[...$('am').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setAmbient(i === 1); });
+[...$('so').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => { setSound(i === 1); if (i === 1) audio.start(); }; });
+for (const [id, which] of [['vm', 'motors'], ['va', 'ambient']])
+  [...$(id).querySelectorAll('button')].forEach((b, i) => { b.onclick = () => { setVolume(which, audio.vol[which] + (i ? 0.2 : -0.2)); audio.start(); }; });
 updateMenuButtons();
+// the sections of the menu: where there is no room for all of them, one at a time (the tabs)
+[...$('tabs').querySelectorAll('button')].forEach((b) => {
+  b.onclick = () => {
+    for (const o of $('tabs').querySelectorAll('button')) { o.classList.toggle('on', o === b); $(o.dataset.g).classList.toggle('on', o === b); }
+  };
+});
 
 // libfpv opens its settings by itself when it sees a radio that is not set up yet, even in the menu, where
 // the mouse does not reach them: the settings open only when the pilot asks (F8, the Setup button)
@@ -253,7 +272,7 @@ function enter(withOverlay) {
   document.activeElement?.blur?.();
   setState('g');
   $('d').textContent = 'Resume';
-  audio.start(); audio.setEnabled(soundOn);
+  audio.start(); audio.setEnabled(soundOn); audio.setMenu(false);
   core.setPaused(false);
   core.overlayOpen(!!withOverlay);
 }
@@ -264,6 +283,7 @@ function openMenu() {
   core.setPaused(true);
   for (const k of held) core.key(k, false);
   held.clear();
+  audio.setMenu(true);
   setState('m');
 }
 
@@ -371,6 +391,20 @@ addEventListener('mouseup', (e) => { if (overMouse()) core.mouseButton([0, 2, 1]
 addEventListener('wheel', (e) => { if (overMouse()) { core.mouseWheel(-e.deltaX / 100, -e.deltaY / 100); e.preventDefault(); } }, { passive: false });
 addEventListener('contextmenu', (e) => { if (overMouse()) e.preventDefault(); });
 
+// what the menu's OSD elements show: where the launch spot is, the time and weather, and, once the
+// quad has flown, its real battery and video link (as the goggles would between flights)
+let osdT = 0;
+function menuOsd(dt) {
+  osdT -= dt;
+  if (osdT > 0) return;
+  osdT = 0.5;
+  const s = spots[spot], f = core.frame;
+  $('oel').textContent = `HALVARD BAY \u00B7 ${placeLabel(superblockAt(s.pos[0], s.pos[2]))}`;
+  $('oep').textContent = `${TIMES[timeKey].label} \u00B7 ${raining ? 'RAIN' : 'CLEAR'}`;
+  $('oeb').textContent = f && entered ? `${Math.round(f.battery.cells) || 4}S ${f.battery.volts.toFixed(1)}V  ${Math.round(f.video.rssi)}DBM` : soundOn ? 'READY' : 'READY \u00B7 SOUND OFF';
+  const t = f && entered ? f.simTime : 0;
+  $('oet').textContent = entered ? `PAUSE ${String(Math.floor(t / 60)).padStart(2, '0')}:${String(Math.floor(t % 60)).padStart(2, '0')}` : 'STANDBY';
+}
 // the radio status line in the menu
 let lastStatus = '';
 function menuStatus() {
@@ -383,13 +417,72 @@ function menuStatus() {
   if (text !== lastStatus) { lastStatus = text; $('rs').textContent = text; $('rs').classList.toggle('ok', s.source === 'radio' && !s.needsSetup); }
 }
 
+// ---- what the sound is made from: what the quad hit, and what is round the listener ----
+const HIT_KIND = ['masonry', 'glass', 'metal', 'wood'];
+function hitKind(p) {
+  let best = -1, area = Infinity;
+  city.eachBoxNear(p[0], p[2], 1.5, (b, o, snd) => {
+    const [lx, lz] = boxLocal(b, o, p[0], p[2]);
+    if (Math.abs(lx) > b[o + 2] + 0.8 || Math.abs(lz) > b[o + 3] + 0.8 || p[1] < b[o + 6] - 0.8 || p[1] > b[o + 7] + 0.8) return;
+    // the smallest thing it is against (a pole in front of a wall is the pole)
+    const a = b[o + 2] * b[o + 3];
+    if (a < area) { area = a; best = snd; }
+  });
+  return best < 0 ? 'ground' : HIT_KIND[best] || 'masonry';
+}
+const BUSY = { downtown: 1, midtown: 0.85, residential: 0.55, oldtown: 0.5, industrial: 0.4, suburb: 0.25, park: 0.25, riverside: 0.35, docks: 0.3 };
+const place = { alt: 0, speed: 0, wind: 0, rain: 0, motors: 0, traffic: 0, side: 0, urban: 0.5, enclosed: 0, water: 0, train: { gain: 0, pan: 0 } };
+let placeT = 0;
+// refreshed ten times a second: the listener is the camera (the quad in the goggles)
+function soundPlace(dt, f, t) {
+  place.rain = env.rain;
+  place.speed = f && playing ? Math.hypot(f.vel[0] - f.wind[0], f.vel[1] - f.wind[1], f.vel[2] - f.wind[2]) : 0;
+  place.wind = f ? Math.hypot(...f.wind) : raining ? 7.5 : 2.8;
+  place.motors = f && playing ? clamp(f.motors.reduce((s, m) => s + Math.abs(m.rpm), 0) / 4 / 26000, 0, 1) : 0;
+  placeT -= dt;
+  if (placeT > 0 || !audio.ctx) return place;
+  placeT = 0.1;
+  const [x, y, z] = view.pos, alt = Math.max(0, y - city.supportY(x, z, y + 0.5));
+  place.alt = alt;
+  // right of the listener, on the ground plane
+  const r = view.basis ? view.basis.r : [Math.cos(view.yaw), 0, Math.sin(view.yaw)], pan = (dx, dz) => { const l = Math.hypot(dx, dz) || 1; return clamp((dx * r[0] + dz * r[2]) / l, -1, 1); };
+  // the nearest avenue: how near, how busy (by district), from how high
+  const sb = superblockAt(x, z), busy = BUSY[sb.kind] ?? 0.4;
+  const near = [[x - sb.x0, -1, 0], [sb.x1 - x, 1, 0], [z - sb.z0, 0, -1], [sb.z1 - z, 0, 1]].reduce((a, b) => (b[0] < a[0] ? b : a));
+  place.traffic = busy / (1 + (near[0] / 45) ** 2) / (1 + (alt / 70) ** 2);
+  place.side = pan(near[1], near[2]) * Math.min(1, near[0] / 15);
+  place.urban = clamp(coreField(x, z) * 1.5 + busy * 0.55, 0, 1);
+  // walls round the listener that rise above it
+  let walls = 0;
+  city.eachBoxNear(x, z, 34, (b, o) => {
+    if (b[o + 7] < y + 3 || b[o + 2] < 3 || b[o + 3] < 3 || b[o + 6] > y + 4) return;
+    const [lx, lz] = boxLocal(b, o, x, z), d = Math.hypot(Math.max(Math.abs(lx) - b[o + 2], 0), Math.max(Math.abs(lz) - b[o + 3], 0));
+    if (d < 34) walls += 1 - d / 34;
+  });
+  place.enclosed = clamp(walls / 3.2, 0, 1);
+  const rv = riverAt(z);
+  place.water = rv ? 1 - smooth(rv.hw * 0.7, rv.hw + 70, Math.abs(z - riverZk(rv, x))) : 0;
+  // the nearest train on the elevated line
+  let tg = 0, tp = 0;
+  for (const L of loopsNear(x - 260, z - 260, x + 260, z + 260)) {
+    if (x < L.x0 - 260 || x > L.x1 + 260 || z < L.z0 - 260 || z > L.z1 + 260) continue;
+    for (const tr of loopTrains(L)) {
+      const [tx, tz] = trainPos(L, (tr.s0 + t * TRAIN.v - 2 * TRAIN.car) * tr.dir, -tr.dir * TRAIN.o);
+      const d = Math.hypot(tx - x, TRAIN_Y + 2 - y, tz - z), g = d < 320 ? 1 / (1 + (d / 50) ** 2) : 0;
+      if (g > tg) { tg = g; tp = pan(tx - x, tz - z); }
+    }
+  }
+  place.train.gain = tg; place.train.pan = tp;
+  return place;
+}
+
 // for poking at the sim from the developer console
-window.__fpv = { core, view, city, R, goggles, spots, get frame() { return core.frame; }, get launching() { return !!pendingSpot; } };
+window.__fpv = { core, view, city, R, goggles, spots, audio, place, hitKind, get frame() { return core.frame; }, get launching() { return !!pendingSpot; } };
 
 // ---- the loop ----
 setState('m');
 let last = performance.now(), t0 = last, frames = 0, statT = 0, statN = 0, perfT = 0, perfN = 0;
-let wasCrashed = false, propAngle = [0, 0, 0, 0];
+let wasCrashed = false, wasWet = false, propAngle = [0, 0, 0, 0];
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -414,7 +507,11 @@ function frame(now) {
       // where the pilot is the camera)
       if (unlimited) core.setPilot(viewMode === 2 ? pilotHome : [f.pos[0], f.pos[1] + 3, f.pos[2]]);
       cameraView(viewMode === 0 ? f.camera : viewMode === 1 ? f.chase : f.los);
-      if (f.impacts > 0 && f.hardest > 1.5) audio.playHit(clamp(f.hardest / 15, 0.05, 1), f.hardest > 8);
+      // what it hit, and how hard (hardest: the speed of the hit, m/s); into the river, a splash, once
+      const wet = f.pos[1] < RIVER.level + 0.5 && inRiver(f.pos[0], f.pos[2]);
+      if (wet && !wasWet) audio.playSplash(clamp(Math.hypot(...f.vel) / 14, 0.15, 1));
+      else if (!wet && f.impacts > 0 && f.hardest > 1.2) audio.playHit(clamp((f.hardest - 0.8) / 13, 0.04, 1), hitKind(f.pos), f.hardest > 8);
+      wasWet = wet;
       if (f.crashed && !wasCrashed) toast(f.propHit ? 'Props broken · R to respawn' : 'Crashed · R to respawn');
       wasCrashed = f.crashed;
       for (let i = 0; i < 4; i++) propAngle[i] += ((f.motors[i].rpm * f.motors[i].dir) / 60) * 2 * Math.PI * dt;
@@ -425,7 +522,7 @@ function frame(now) {
       if (a === 2) goSpot(spot, true);
     }
   }
-  if (!playing) menuStatus();
+  if (!playing) { menuStatus(); menuOsd(dt); }
   snow(dt);
   stepEnv(dt);
   R.render(view, env, t);
@@ -439,7 +536,8 @@ function frame(now) {
   if (!core.overlayIsOpen) { if (overlayAsked) applyName(); overlayAsked = false; }
   goggles.drawUICanvas(core, osd, overlay, [innerWidth, innerHeight]);
   document.body.classList.toggle('ov', !!overlay);
-  audio.update(dt, { alt: view.pos[1], speed: f ? (f.speedKmh / 3.6) * 3 : 0, rain: env.rain });
+  if (playing) audio.pump();
+  audio.update(dt, soundPlace(dt, f, t));
 
   if (++frames === 40) { const p = loadPrefs(); delete p.pending; savePrefs(p); }
   // adapt the resolution towards a steady 60 fps
