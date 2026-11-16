@@ -44,6 +44,7 @@ const RIVER_HW = ${f(RIVER.hw)};
 const RAMP = ${f(RIVER.ramp)};
 const BRIDGE_H = ${f(RIVER.h)};
 const TUN_LEN = ${f(TUNNEL.len)};
+const TUN_RAMP = ${f(TUNNEL.ramp)};
 const TUN_D = ${f(TUNNEL.depth)};
 const ROADY = ${f(ROADY)};
 const TRAIN_Y = ${f(TRAIN_Y)};
@@ -100,9 +101,9 @@ fn bridgeH(x: f32, z: f32) -> f32 {
   let d = riverDist(x, z); let k = clamp(1.0 - d / RAMP, 0.0, 1.0);
   return BRIDGE_H * k * k * (3.0 - 2.0 * k);
 }
-// in a tunnel the road dips out of sight a little way inside the portal (from TUN_LEN off the bank)
+// in a tunnel the road goes down from TUN_LEN off the bank and runs TUN_D under the river (city.js)
 fn tunnelY(x: f32, z: f32) -> f32 {
-  let k = clamp((TUN_LEN - 10.0 - riverDist(x, z)) / 22.0, 0.0, 1.0);
+  let k = clamp((TUN_LEN - riverDist(x, z)) / TUN_RAMP, 0.0, 1.0);
   return -TUN_D * k * k * (3.0 - 2.0 * k);
 }
 
@@ -112,10 +113,15 @@ fn carPose(q: vec4f, slot: f32, t: f32) -> Pose {
   // q: the road's line (x for north-south, z for east-west), this piece's stretch [q.y, q.z] (swapped
   // for north-south), the lane's speed (negative: the other way). The lane is a conveyor of slots
   // CAR_STEP apart; slot k is at k * CAR_STEP + phase + speed * t, the same in every piece.
-  // A lane through a tunnel has its speed offset by 1000 (the same speed: the conveyor stays seamless).
+  // A north-south lane's speed carries a code in its thousands (the same speed: the conveyor stays
+  // seamless): which of the four lanes it is, so the avenue's centre line is known (the deck of a bridge
+  // or a tunnel is level across), and whether this stretch is a tunnel.
   let ns = q.y > q.z;
-  let tun = abs(q.w) > 500.0;
-  let sp = select(q.w, q.w - sign(q.w) * 1000.0, tun);
+  let code = floor(abs(q.w) / 1000.0);
+  let sp = q.w - sign(q.w) * code * 1000.0;
+  let tun = code > 4.5;
+  let offs = array<f32, 4>(-5.8, -2.2, 2.2, 5.8);
+  let xc = select(q.x, q.x - offs[u32(max(code - 1.0, 0.0)) % 4u], code > 0.5);
   let lo = min(q.y, q.z); let hi = max(q.y, q.z);
   let lid = pcg(bitcast<u32>(i32(round(q.x * 4.0))) ^ select(0x9e3779b9u, 0x7f4a7c15u, q.w > 0.0));
   let base = rnd(lid) * CAR_STEP + sp * t;
@@ -131,13 +137,11 @@ fn carPose(q: vec4f, slot: f32, t: f32) -> Pose {
     let d = select(-0.5, 0.5, fw);
     P.yaw = select(PI * 0.5, -PI * 0.5, fw);
     if (tun) {
-      let y = tunnelY(q.x, s);
-      P.pos = vec3f(q.x, ROADY + y, s);
-      P.pitch = atan(tunnelY(q.x, s + d) - tunnelY(q.x, s - d));
-      P.on = P.on && y > -2.5;   // out of sight in the dark of the tunnel
+      P.pos = vec3f(q.x, ROADY + tunnelY(xc, s), s);
+      P.pitch = atan(tunnelY(xc, s + d) - tunnelY(xc, s - d));
     } else {
-      P.pos = vec3f(q.x, ROADY + bridgeH(q.x, s), s);
-      P.pitch = atan(bridgeH(q.x, s + d) - bridgeH(q.x, s - d));
+      P.pos = vec3f(q.x, ROADY + bridgeH(xc, s), s);
+      P.pitch = atan(bridgeH(xc, s + d) - bridgeH(xc, s - d));
     }
   }
   return P;
@@ -573,6 +577,7 @@ fn suburbLights(w: vec3f) -> vec3f {
   var ty = 7u; var path = 0.0; var pond = 0.0;
   if (tileOK(w)) {
     ty = u32(textureLoad(layoutTex, vec2i(floor(fract(uv) * SPAN_PX)), 0).r * 255.0 + 0.5);
+    if (ty == 10u) { discard; }   // the open ramp down into a tunnel
     let ls = textureSampleLevel(layoutTex, sampW, uv, 0.0);
     path = ls.g; pond = ls.a;
   }
@@ -601,6 +606,7 @@ fn suburbLights(w: vec3f) -> vec3f {
   return vec4f(applyFog(c, w), 1.0);
 }
 @fragment fn fs_water(i: GO) -> @location(0) vec4f {
+  if (riverDist(i.w.x, i.w.z) > 1.5) { discard; }   // only in a river (not under a tunnel's ramp)
   return vec4f(applyFog(waterColor(i.w, normalize(i.w - u.cam.xyz), i.pos.xy), i.w), 1.0);
 }
 

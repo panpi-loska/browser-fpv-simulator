@@ -62,15 +62,25 @@ function bridgeH(x, z) {
 // What carries north-south avenue i over river r: Halvard Bay's suspension bridge at the origin;
 // elsewhere a tunnel now and then (where both banks have room for its portals: it keeps the traffic
 // flowing where there is no bridge), or a bridge of one kind or another, the big ones on wide rivers.
-const TUNNEL = { len: 54, depth: 7 };
+// a tunnel: the road starts down len m from the bank, is in a covered tunnel from portal m, and runs
+// depth m down under the river (the same profile in carPose, shaders.js)
+const TUNNEL = { len: 54, ramp: 34, portal: 32, depth: 9 };
+function tunnelY(r, xc, z) {
+  const d = Math.abs(z - riverZk(r, xc)) - r.hw, k = clamp((TUNNEL.len - d) / TUNNEL.ramp, 0, 1);
+  return -TUNNEL.depth * k * k * (3 - 2 * k);
+}
 function crossingOf(i, r) {
   if (i === 0 && r.k === 0) return 'suspension';
   const x = aveX(i), rz = riverZk(r, x), u = ih2(i, r.k, 62), half = AVE.w / 2;
   const room = Math.min(rz - r.hw - (r.zc - r.row + half), r.zc + r.row - half - (rz + r.hw));
+  // in a port there are ships and cranes on the water: no bridges in their way, the avenues go under
+  // (as in Antwerp or Rotterdam); a plain low bridge only where the banks leave no room for the ramps
+  const L = zLinesOf(r.k), A = L.find((l) => l.kind === 'n'), B = L.find((l) => l.kind === 's');
+  if (superblock(i, A, B).kind === 'docks' || superblock(i - 1, A, B).kind === 'docks') return room > TUNNEL.len + 12 ? 'tunnel' : 'girder';
   const uu = (j) => ih2(j, r.k, 62);
   // never two tunnels side by side; the big bridges (suspension, cable-stayed) are few and far apart,
   // and arches do not come in a row either
-  if (u < 0.2 && room > TUNNEL.len + 12 && uu(i - 1) >= 0.2) return 'tunnel';
+  if (u < 0.12 && room > TUNNEL.len + 12 && uu(i - 1) >= 0.12) return 'tunnel';
   const alone = (lo, hi, n) => [-3, -2, -1, 1, 2, 3].slice(3 - n, 3 + n).every((d) => uu(i + d) <= lo || uu(i + d) > hi || u > uu(i + d));
   if (u > 0.955 && r.hw > 55 && alone(0.955, 1, 3)) return 'suspension';
   if (u > 0.84 && u <= 0.955 && r.hw > 45 && alone(0.84, 0.955, 2)) return 'cable';

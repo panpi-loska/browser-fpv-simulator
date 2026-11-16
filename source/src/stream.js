@@ -190,7 +190,8 @@ function createStreamer(Q, R, core) {
   }
   // the highest solid surface under (x, z) that is below y: a roof, a bridge deck, the street or the river
   function supportY(x, z, y) {
-    let best = inRiver(x, z) ? RIVER.level : ROADY;
+    // (below the street, in a tunnel, only the boxes count)
+    let best = y < -0.2 || tunnelTrenches(x, z, x, z).length ? -1e9 : inRiver(x, z) ? RIVER.level : ROADY;
     eachBoxNear(x, z, 0, (b, i) => {
       const [lx, lz] = boxLocal(b, i, x, z);
       if (Math.abs(lx) <= b[i + 2] && Math.abs(lz) <= b[i + 3] && b[i + 7] <= y + 0.5) best = Math.max(best, b[i + 7]);
