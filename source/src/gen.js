@@ -743,14 +743,29 @@ function lane(K, axis, coord, dir, lo, hi, code = 0) {
     for (const z of [-0.62, 0.62]) { K.sprite(2.22, 0.78, z, [1, 0.92, 0.8], 4, 0.35, ANIM.car, 1, i, q); K.sprite(-2.22, 0.85, z, [1, 0.06, 0.03], 3, 0.3, ANIM.car, -1, i, q); }
   }
 }
-// both directions of an avenue over [lo, hi); right-hand traffic: driving +x keeps to +z, driving +z keeps to -x
-// (tun: the stretch dives through a tunnel, see carPose)
-function lanes(K, axis, coord, lo, hi, tun = false) {
+// The four lanes of a north-south avenue over [lo, hi) of this piece, on the stretch [e0, e1] between
+// port gates (aveStretch): q holds the lane's x, the ends and its speed with the lane's code; the
+// instances sit at the piece's centre (cpx, cpz), so the shader knows which piece draws which cars.
+function nsLanes(K, x, lo, hi, e0, e1, cpx, cpz) {
+  if (!K.full || hi - lo < 1) return;
+  const { G } = K;
+  for (const o of [2.2, 5.8])
+    for (const [lx, dir, code] of [[x - o, 1, o > 3 ? 1 : 2], [x + o, -1, o > 3 ? 4 : 3]]) {
+      const speed = 9 + 7 * ih(Math.round(lx * 4), dir > 0 ? 81 : 82), q = [lx, e0, e1, dir * (speed + 1000 * code)];
+      for (let i = 0, n = Math.ceil((hi - lo + Math.PI * o) / CAR_STEP) + 1; i < n; i++) {
+        G.cube.push(TM.box(cpx, 0.72, cpz, 4.4, 0.78, 1.86), [0.3, 0.3, 0.3, 0], [MAT.basic, ANIM.car, 1, i], q);
+        G.cube.push(TM.box(cpx - 0.3, 1.38, cpz, 2.3, 0.58, 1.62), [0.02, 0.022, 0.026, 0], [MAT.basic, ANIM.car, 0, i], q);
+        for (const z of [-0.62, 0.62]) { K.sprite(cpx + 2.22, 0.78, cpz + z, [1, 0.92, 0.8], 4, 0.35, ANIM.car, 1, i, q); K.sprite(cpx - 2.22, 0.85, cpz + z, [1, 0.06, 0.03], 3, 0.3, ANIM.car, -1, i, q); }
+      }
+    }
+}
+// both directions of an east-west avenue over [lo, hi); right-hand traffic: driving +x keeps to +z
+function lanes(K, axis, coord, lo, hi) {
   if (!K.full || hi - lo < 1) return;
   for (const o of [2.2, 5.8]) {
     if (axis === 0) { lane(K, 0, coord + o, 1, lo, hi); lane(K, 0, coord - o, -1, lo, hi); }
-    // north-south: the lane's code (see carPose): 1-4 which lane, +4 in a tunnel
-    else { const t = tun ? 4 : 0; lane(K, 1, coord - o, 1, lo, hi, (o > 3 ? 1 : 2) + t); lane(K, 1, coord + o, -1, lo, hi, (o > 3 ? 4 : 3) + t); }
+    // north-south: the lane's code (see carPose): which of the four lanes it is
+    else { lane(K, 1, coord - o, 1, lo, hi, o > 3 ? 1 : 2); lane(K, 1, coord + o, -1, lo, hi, o > 3 ? 4 : 3); }
   }
 }
 // ---------- the streets inside a superblock (layout.js), in any direction ----------
@@ -895,6 +910,31 @@ function bridge(K, x, r, w, type, own) {
     }
   }
 }
+// a port's gate at the end of an avenue: the terminal building (dark doorways, a lit band over them,
+// D m deep: it keeps off the quay), a canopy over the gate lanes with a booth and closed barriers;
+// the traffic turns round in front of it. s: +1 the building lies towards +z of its doors, -1 -z
+function portGate(K, x, zd, s, D, own) {
+  if (!own(x, zd)) return;
+  const { G } = K, W = 32, H = 10, zb = zd + (s * D) / 2, wall = [0.26, 0.28, 0.3];
+  K.basic(G.cube, TM.box(x, H / 2, zb, W, H, D), wall);
+  K.collider(x - W / 2, 0, zb - D / 2, x + W / 2, H, zb + D / 2);
+  K.footRect(x - W / 2, zb - D / 2, x + W / 2, zb + D / 2);
+  // the doorways, one each way, and the lit band over them
+  for (const dx of [-5, 5]) K.basic(G.cube, TM.box(x + dx, 2.6, zd - s * 0.04, 9, 5.2, 0.1), [0.015, 0.015, 0.018]);
+  K.emissive(G.cube, TM.box(x, 6.4, zd - s * 0.06, W - 6, 0.9, 0.1), [0.35, 0.75, 1.0], 2.4);
+  for (let dx = -12; dx <= 12; dx += 6) K.sprite(x + dx, H + 0.6, zb, [1, 0.08, 0.04], 3, 0.5, ANIM.blink, 0, K.rd());
+  // the canopy over the gate lanes, on four posts, lit beneath; booths and barriers under it
+  const zc = zd - s * 6.5;
+  K.basic(G.cube, TM.box(x, 6.3, zc, W - 4, 0.6, 12), [0.7, 0.7, 0.72]);
+  K.collider(x - W / 2 + 2, 6, zc - 6, x + W / 2 - 2, 6.6, zc + 6);
+  for (const dx of [-13, 13]) for (const dz of [-5, 5]) { K.basic(G.cube, TM.box(x + dx, 3, zc + dz, 0.5, 6, 0.5), [0.6, 0.6, 0.62]); K.collider(x + dx - 0.25, 0, zc + dz - 0.25, x + dx + 0.25, 6, zc + dz + 0.25); }
+  K.emissive(G.cube, TM.box(x, 6.3, zc - s * 6.05, W - 6, 0.5, 0.08), [0.35, 0.75, 1.0], 2);
+  for (const dx of [-8, 0, 8]) { K.sprite(x + dx, 5.8, zc, LED, 6, 1.4); K.splat(x + dx, zc, 0.75, 0.82, 0.9, 7); }
+  K.basic(G.cube, TM.box(x, 1.2, zc, 1.6, 2.4, 3), [0.75, 0.75, 0.72]);
+  K.emissive(G.cube, TM.box(x, 1.7, zc, 1.7, 0.7, 2.4), [1, 0.85, 0.6], 1.2);
+  K.collider(x - 0.8, 0, zc - 1.5, x + 0.8, 2.4, zc + 1.5);
+  for (const dx of [-5, 5]) K.basic(G.cube, TM.box(x + dx, 1.1, zc - s * 5, 8, 0.12, 0.12), [0.85, 0.12, 0.1]);
+}
 // a steel arch over the river from bank to bank on each side of the deck, hangers down to it
 function archSpan(K, x, r, W) {
   const { G } = K, rz = riverZk(r, x), deckY = ROADY + RIVER.h, z0 = rz - r.hw + 1, z1 = rz + r.hw - 1, half = (z1 - z0) / 2;
@@ -936,76 +976,6 @@ function cableStayed(K, x, r, W) {
       const z = rz + s * (reach * k) / 9, top = H + 1 + k * 0.8, yd = ROADY + bridgeH(x, z) + 0.8;
       for (const lx of [x - W / 2 + 0.3, x + W / 2 - 0.3]) K.emissive(G.cube, TM.seg(x, top, rz, lx, yd, z, 0.3), [0.8, 0.85, 0.95], 0.7);
     }
-}
-// a tunnel under the river: on each bank an open ramp down between walls to a portal, a covered stretch
-// under the bank, and a tube under the water, lit all the way; the traffic drives right through
-// (carPose) and so can the drone. The ground and the water have an opening over the ramps
-// (tunnelTrenches: chunkMesh, chunkRaster).
-function tunnel(K, x, r, own) {
-  const { G } = K, rz = riverZk(r, x), W = AVE.w, L = r.hw + TUNNEL.len, zA = rz - L, zB = rz + L, n = Math.ceil((zB - zA) / 4);
-  const conc = [0.24, 0.23, 0.22], tile = [0.5, 0.48, 0.43], sodium = [1, 0.7, 0.38];
-  const ty = (z) => tunnelY(r, x, z);
-  for (let k = 0; k < n; k++) {
-    const z0 = zA + ((zB - zA) * k) / n, z1 = zA + ((zB - zA) * (k + 1)) / n, zm = (z0 + z1) / 2;
-    if (!own(x, zm)) continue;
-    const y0 = ROADY + ty(z0), y1 = ROADY + ty(z1), len = Math.hypot(z1 - z0, y1 - y0), sn = (y1 - y0) / len, cs = (z1 - z0) / len;
-    const d = Math.abs(zm - rz) - r.hw, zone = d > TUNNEL.portal ? 0 : d > 0 ? 1 : 2;   // open ramp, under the bank, under the river
-    const yLo = Math.min(y0, y1), yHi = Math.max(y0, y1);
-    // the road
-    G.cube.push(TM.pitch(x, (y0 + y1) / 2 - 0.6, zm, W, 1.2, len + 0.25, sn, cs), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [1, W, 2, 0]);
-    // the road to collide with, in 1 m steps (it is steep on the ramps)
-    for (let j = 0, m = Math.max(1, Math.round(z1 - z0)); j < m; j++) {
-      const za = z0 + ((z1 - z0) * j) / m, zb = z0 + ((z1 - z0) * (j + 1)) / m, ya = ROADY + ty(za), yb = ROADY + ty(zb);
-      K.collider(x - W / 2, Math.min(ya, yb) - 1.2, za, x + W / 2, (ya + yb) / 2, zb);
-    }
-    // the walls, up to a parapet along the ramp, to the ceiling inside; the ceiling
-    const top = zone === 0 ? 0.9 : zone === 1 ? -0.6 : -2.6;
-    for (const sx of [-1, 1]) {
-      K.basic(G.cube, TM.box(x + sx * (W / 2 + 1), (yLo - 0.8 + top) / 2, zm, 2, top - yLo + 0.8, z1 - z0 + 0.02), zone ? tile : conc);
-      K.collider(x + sx * (W / 2 + 1) - 1, yLo - 0.8, z0, x + sx * (W / 2 + 1) + 1, top, z1);
-    }
-    if (zone) {
-      const c0 = zone === 1 ? -0.6 : -2.6, c1 = zone === 1 ? -0.05 : -1.4;
-      K.basic(G.cube, TM.box(x, (c0 + c1) / 2, zm, W + 4, c1 - c0, z1 - z0 + 0.02), conc);
-      K.collider(x - W / 2 - 2, c0, z0, x + W / 2 + 2, c1, z1);
-      // two rows of sodium lights along the ceiling
-      for (const lx of [x - 5, x + 5]) K.emissive(G.cube, TM.box(lx, c0 - 0.05, zm, 0.45, 0.08, z1 - z0 - 0.6), sodium, 1.6);
-      if (k % 2 === 0) { K.sprite(x, c0 - 0.4, zm, sodium, 4, 1.1); K.splat(x, zm, 0.55, 0.38, 0.2, 7); }
-    }
-  }
-  for (const s of [-1, 1]) {
-    // the portal: a header over the mouth, a lit band and lane lights on it, lamps at the top of the ramp
-    const zp = rz + s * (r.hw + TUNNEL.portal), ze = rz + s * L, zb = rz + s * r.hw;
-    if (own(x, zp)) {
-      K.basic(G.cube, TM.box(x, -0.45, zp + s * 0.6, W + 4, 2.7, 1.2), [0.42, 0.41, 0.39]);
-      K.collider(x - W / 2 - 2, -1.8, zp + s * 0.6 - 0.6, x + W / 2 + 2, 0.9, zp + s * 0.6 + 0.6);
-      K.emissive(G.cube, TM.box(x, -0.4, zp + s * 1.22, W - 2, 0.8, 0.06), [0.75, 0.85, 1.0], 2.6);
-      for (const lx of [x - 4, x + 4]) K.sprite(lx, -1.2, zp + s * 1.4, [0.3, 1, 0.4], 3, 0.35);
-      for (let t = 2; t < TUNNEL.len - TUNNEL.portal; t += 7) K.splat(x, zp + s * t, 0.6, 0.45, 0.28, 7);
-    }
-    if (own(x, ze)) for (const lx of [x - W / 2 - 3, x + W / 2 + 3]) K.streetLamp(lx, ze, Math.sign(x - lx), 0, LAMP, 6);
-    // where the ceiling steps down under the river
-    if (own(x, zb)) {
-      K.basic(G.cube, TM.box(x, -1.6, zb, W + 4, 2, 1), conc);
-      K.collider(x - W / 2 - 2, -2.6, zb - 0.5, x + W / 2 + 2, -0.6, zb + 0.5);
-    }
-  }
-}
-// the openings in the ground over the tunnel ramps near an area: [x0, z0, x1, z1]
-function tunnelTrenches(X0, Z0, X1, Z1) {
-  const out = [];
-  for (const { i, x } of aveXs(X0 - 20, X1 + 20))
-    for (let k = riverK(Z0) - 1; k <= riverK(Z1) + 1; k++) {
-      const r = riverSlot(k);
-      if (!r.on || crossingOf(i, r) !== 'tunnel') continue;
-      const rz = riverZk(r, x);
-      for (const s of [-1, 1]) {
-        const za = rz + s * (r.hw + TUNNEL.portal), zb = rz + s * (r.hw + TUNNEL.len);
-        const t = [x - 11, Math.min(za, zb), x + 11, Math.max(za, zb)];
-        if (t[2] > X0 && t[0] < X1 && t[3] > Z0 && t[1] < Z1) out.push(t);
-      }
-    }
-  return out;
 }
 // an elevated line runs above some avenues, from one riverside (or slot) to the next;
 // its trains loop along that stretch (ANIM.train), stations at both ends
@@ -1082,12 +1052,12 @@ function genChunk(cx, cz, lod, Q) {
       if (B.z < Z0 - 400 || A.z > Z1 + 400) continue;
       const r = A.kind === 'n' ? riverSlot(A.k) : null;
       const cross = r ? crossingOf(i, r) : null;
-      if (r && cross === 'tunnel') {
-        // the road runs on into the portals, the tunnel goes under the river
-        const rz = riverZk(r, x);
-        roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(rz - r.hw - TUNNEL.len, Z1));
-        roadStrip(K, 1, x, AVE.w, 2, Math.max(rz + r.hw + TUNNEL.len, Z0), Math.min(B.z, Z1));
-        tunnel(K, x, r, own);
+      if (r && cross === 'gate') {
+        // a port: the avenue ends at the gate on each bank (the traffic drives in and out of it)
+        const dN = A.z + PORT_GATE.door, dS = B.z - PORT_GATE.door, rz = riverZk(r, x);
+        roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(dN, Z1));
+        roadStrip(K, 1, x, AVE.w, 2, Math.max(dS, Z0), Math.min(B.z, Z1));
+        portGate(K, x, dN, 1, clamp(rz - r.hw - dN - 6, 10, 30), own); portGate(K, x, dS, -1, clamp(dS - (rz + r.hw) - 6, 10, 30), own);
       } else if (r) {
         const rz = riverZk(r, x), zA = rz - r.hw - RIVER.ramp, zB = rz + r.hw + RIVER.ramp;
         roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(zA, Z1));
@@ -1098,14 +1068,24 @@ function genChunk(cx, cz, lod, Q) {
       const crosses = [{ pos: A.z, w: AVE.w }, { pos: B.z, w: AVE.w }];
       if (a > 0) for (const j of sbLayout(superblock(xs[a - 1].i, A, B)).edgeJ.x1) crosses.push(j);
       for (const j of sbLayout(superblock(i, A, B)).edgeJ.x0) crosses.push(j);
-      if (r) {
-        const rz = riverZk(r, x), m = cross === 'tunnel' ? TUNNEL.len + 2 : RIVER.ramp;
-        roadLamps(K, 1, x, AVE.w, A.z, rz - r.hw - m, own, crosses, LAMP, step);
-        roadLamps(K, 1, x, AVE.w, rz + r.hw + m, B.z, own, crosses, LAMP, step);
+      if (r && cross === 'gate') {
+        roadLamps(K, 1, x, AVE.w, A.z, A.z + PORT_GATE.door - 12, own, crosses, MERCURY, step);
+        roadLamps(K, 1, x, AVE.w, B.z - PORT_GATE.door + 12, B.z, own, crosses, MERCURY, step);
+      } else if (r) {
+        const rz = riverZk(r, x);
+        roadLamps(K, 1, x, AVE.w, A.z, rz - r.hw - RIVER.ramp, own, crosses, LAMP, step);
+        roadLamps(K, 1, x, AVE.w, rz + r.hw + RIVER.ramp, B.z, own, crosses, LAMP, step);
       } else roadLamps(K, 1, x, AVE.w, A.z, B.z, own, crosses, lampColor(superblock(i, A, B)), step);
       if (!r && boulevardX(i)) median(K, 1, x, A.z, B.z, own, lampColor(superblock(i, A, B)), step);
-      lanes(K, 1, x, Math.max(A.z, Z0), Math.min(B.z, Z1), cross === 'tunnel');
     }
+    // its traffic: this piece's stretch of road, less the port rows the avenue stops at
+    let parts = [[Z0, Z1]];
+    for (let k = riverK(Z0) - 1; k <= riverK(Z1) + 1; k++) {
+      const g = gateEnds(i, k);
+      if (!g) continue;
+      parts = parts.flatMap(([p0, p1]) => [[p0, Math.min(p1, g[0])], [Math.max(p0, g[1]), p1]]).filter(([p0, p1]) => p1 - p0 > 0.5);
+    }
+    for (const [p0, p1] of parts) { const [e0, e1] = aveStretch(i, (p0 + p1) / 2); nsLanes(K, x, p0, p1, e0, e1, X0 + CHUNK / 2, Z0 + CHUNK / 2); }
   }
   // ---- elevated lines, from one river slot to the next ----
   for (const { i, x } of xs) {
@@ -1198,33 +1178,14 @@ function chunkMesh(boxes, X0, Z0) {
   const r = riverAt(Z0 + CHUNK / 2) || riverAt(Z0) || riverAt(Z1);
   const hw = r ? r.hw + 0.5 : 0;
   const crosses = r && Math.max(r.zc - RIVER.amp - hw, Z0) < Math.min(r.zc + RIVER.amp + hw, Z1);
-  // the ground: strips between xs (cut where a tunnel ramp opens), z from za to zb at each edge
-  const holes = tunnelTrenches(X0, Z0, X1, Z1);
-  const cuts = [X0, X1];
-  for (const h of holes) for (const v of [h[0], h[2]]) if (v > X0 && v < X1) cuts.push(v);
-  const ground = (xa, xb, za0, zb0, za1, zb1) => {   // za0..zb0 at xa, za1..zb1 at xb
-    const xm = (xa + xb) / 2, hs = holes.filter((h) => xm > h[0] && xm < h[2]);
-    let parts = [[za0, zb0, za1, zb1]];
-    for (const h of hs) {
-      const next = [];
-      for (const [p0, q0, p1, q1] of parts) {
-        if (Math.min(p0, p1) < h[1]) next.push([p0, Math.min(q0, h[1]), p1, Math.min(q1, h[1])]);
-        if (Math.max(q0, q1) > h[3]) next.push([Math.max(p0, h[3]), q0, Math.max(p1, h[3]), q1]);
-      }
-      parts = next;
-    }
-    for (const [p0, q0, p1, q1] of parts) if (q0 - p0 > 0.01 || q1 - p1 > 0.01) quad([xa, ROADY, p0], [xa, ROADY, q0], [xb, ROADY, q1], [xb, ROADY, p1], 0);
-  };
-  if (!crosses) {
-    const xs = [...new Set(cuts)].sort((p, q) => p - q);
-    for (let k = 0; k + 1 < xs.length; k++) ground(xs[k], xs[k + 1], Z0, Z1, Z0, Z1);
-  } else {
-    const STEP = 16, xs = [...new Set(cuts.concat(Array.from({ length: CHUNK / STEP }, (_, k) => X0 + k * STEP)))].sort((p, q) => p - q);
-    for (let k = 0; k + 1 < xs.length; k++) {
-      const xa = xs[k], xb = xs[k + 1], rzA = riverZk(r, xa), rzB = riverZk(r, xb);
+  if (!crosses) quad([X0, ROADY, Z0], [X0, ROADY, Z1], [X1, ROADY, Z1], [X1, ROADY, Z0], 0);
+  else {
+    const STEP = 16;
+    for (let x = X0; x < X1; x += STEP) {
+      const xa = x, xb = x + STEP, rzA = riverZk(r, xa), rzB = riverZk(r, xb);
       const na = clamp(rzA - hw, Z0, Z1), nb = clamp(rzB - hw, Z0, Z1), sa = clamp(rzA + hw, Z0, Z1), sb = clamp(rzB + hw, Z0, Z1);
-      if (na > Z0 || nb > Z0) ground(xa, xb, Z0, na, Z0, nb);
-      if (sa < Z1 || sb < Z1) ground(xa, xb, sa, Z1, sb, Z1);
+      if (na > Z0 || nb > Z0) quad([xa, ROADY, Z0], [xa, ROADY, na], [xb, ROADY, nb], [xb, ROADY, Z0], 0);
+      if (sa < Z1 || sb < Z1) quad([xa, ROADY, sa], [xa, ROADY, Z1], [xb, ROADY, Z1], [xb, ROADY, sb], 0);
       if (sa > na || sb > nb) quad([xa, RIVER.level, na], [xa, RIVER.level, sa], [xb, RIVER.level, sb], [xb, RIVER.level, nb], 2);
       if (rzA - hw > Z0 && rzA - hw < Z1) quad([xa, RIVER.level, na], [xb, RIVER.level, nb], [xb, ROADY, nb], [xa, ROADY, na], 0);
       if (rzA + hw > Z0 && rzA + hw < Z1) quad([xb, RIVER.level, sb], [xa, RIVER.level, sa], [xa, ROADY, sa], [xb, ROADY, sb], 0);
@@ -1295,10 +1256,6 @@ function chunkRaster(out) {
       if (d > rv.hw && d < rv.hw + 11) lay[(r * TP + c) * 4] = 6;
     }
   }
-  // no ground over the ramps down into the tunnels
-  for (const [hx0, hz0, hx1, hz1] of tunnelTrenches(X0, Z0, X0 + TP * TPX, Z0 + TP * TPX))
-    for (let r = Math.max(0, Math.ceil((hz0 - Z0) / TPX - 0.5)); r < Math.min(TP, Math.floor((hz1 - Z0) / TPX + 0.5)); r++)
-      for (let c = Math.max(0, Math.ceil((hx0 - X0) / TPX - 0.5)); c < Math.min(TP, Math.floor((hx1 - X0) / TPX + 0.5)); c++) lay[(r * TP + c) * 4] = 10;
   const l16 = new Uint16Array(TP * TP * 3);
   for (let i = 0; i < l16.length; i++) l16[i] = Math.min(65535, Math.round(light[i] * 2048));
   out.raster = { light: l16, foot, lay };

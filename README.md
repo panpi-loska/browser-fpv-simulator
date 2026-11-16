@@ -21,8 +21,8 @@ with **WebGPU** (Chrome or Edge on desktop).
   along the avenues, and now and then two avenues cross at a square with a monument or a fountain.
 - A real skyline: a few big business centres, each with a landmark tower with a lit crown, and smaller office
   clusters between them. Avenues are unevenly spaced, as in a real city. Rivers of different widths wind through
-  town, crossed by girder, arch, cable-stayed and suspension bridges, or by road tunnels you can fly through
-  (ports always go under, out of the ships' way).
+  town, crossed by girder, arch, cable-stayed and suspension bridges. Ports keep the water free for ships:
+  the avenues end at the port gate, where the traffic turns round.
 - Rare places to find: stadiums, rail yards, hospitals with a helipad, universities, cemeteries and golf courses.
 - Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.

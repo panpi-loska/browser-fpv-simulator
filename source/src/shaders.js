@@ -43,9 +43,6 @@ const RIVER_P = ${f(RIVER.period)};
 const RIVER_HW = ${f(RIVER.hw)};
 const RAMP = ${f(RIVER.ramp)};
 const BRIDGE_H = ${f(RIVER.h)};
-const TUN_LEN = ${f(TUNNEL.len)};
-const TUN_RAMP = ${f(TUNNEL.ramp)};
-const TUN_D = ${f(TUNNEL.depth)};
 const ROADY = ${f(ROADY)};
 const TRAIN_Y = ${f(TRAIN_Y)};
 const BLIMP_Y = ${f(BLIMP_Y)};
@@ -101,51 +98,97 @@ fn bridgeH(x: f32, z: f32) -> f32 {
   let d = riverDist(x, z); let k = clamp(1.0 - d / RAMP, 0.0, 1.0);
   return BRIDGE_H * k * k * (3.0 - 2.0 * k);
 }
-// in a tunnel the road goes down from TUN_LEN off the bank and runs TUN_D under the river (city.js)
-fn tunnelY(x: f32, z: f32) -> f32 {
-  let k = clamp((TUN_LEN - riverDist(x, z)) / TUN_RAMP, 0.0, 1.0);
-  return -TUN_D * k * k * (3.0 - 2.0 * k);
-}
 
 // ---------- animation: everything that moves is moved here, on the GPU ----------
 struct Pose { pos: vec3f, yaw: f32, pitch: f32, on: bool, k: u32 };
-fn carPose(q: vec4f, slot: f32, t: f32) -> Pose {
-  // q: the road's line (x for north-south, z for east-west), this piece's stretch [q.y, q.z] (swapped
-  // for north-south), the lane's speed (negative: the other way). The lane is a conveyor of slots
-  // CAR_STEP apart; slot k is at k * CAR_STEP + phase + speed * t, the same in every piece.
-  // A north-south lane's speed carries a code in its thousands (the same speed: the conveyor stays
-  // seamless): which of the four lanes it is, so the avenue's centre line is known (the deck of a bridge
-  // or a tunnel is level across), and whether this stretch is a tunnel.
-  let ns = q.y > q.z;
+fn carPose(q: vec4f, slot: f32, t: f32, org: f32) -> Pose {
+  // A lane is a conveyor of slots CAR_STEP apart, the same in every piece. East-west: q = (the lane's z,
+  // this piece's stretch [q.y, q.z) of it in x, speed), slot k at k * CAR_STEP + phase + speed * t.
+  // North-south: q = (the lane's x, the ends [e0, e1] of the avenue's stretch between port gates
+  // (+-1e7: it runs on), speed with a code in its thousands: which of the four lanes it is, so the
+  // centre line is known (a bridge deck is level across)); org is the piece's origin z, the piece draws
+  // its own part of the stretch. Where the stretch ends, the cars turn round into the other direction:
+  // a lane pair is one loop (u along the +z lane, round the turn, back along the -z lane, round the
+  // other turn), so no car ever appears or vanishes.
+  var P: Pose;
   let code = floor(abs(q.w) / 1000.0);
   let sp = q.w - sign(q.w) * code * 1000.0;
-  let tun = code > 4.5;
-  let offs = array<f32, 4>(-5.8, -2.2, 2.2, 5.8);
-  let xc = select(q.x, q.x - offs[u32(max(code - 1.0, 0.0)) % 4u], code > 0.5);
-  let lo = min(q.y, q.z); let hi = max(q.y, q.z);
-  let lid = pcg(bitcast<u32>(i32(round(q.x * 4.0))) ^ select(0x9e3779b9u, 0x7f4a7c15u, q.w > 0.0));
-  let base = rnd(lid) * CAR_STEP + sp * t;
-  let k0 = ceil((lo - base) / CAR_STEP);
-  let s = base + (k0 + slot) * CAR_STEP;
-  var P: Pose;
-  P.k = pcg(bitcast<u32>(i32(k0 + slot)) ^ lid);
-  P.on = s < hi && rnd(P.k) < CAR_KEEP;
   let fw = q.w > 0.0;
-  if (!ns) {
+  if (code < 0.5) {
+    let lid = pcg(bitcast<u32>(i32(round(q.x * 4.0))) ^ select(0x9e3779b9u, 0x7f4a7c15u, fw));
+    let base = rnd(lid) * CAR_STEP + sp * t;
+    let k0 = ceil((q.y - base) / CAR_STEP);
+    let s = base + (k0 + slot) * CAR_STEP;
+    P.k = pcg(bitcast<u32>(i32(k0 + slot)) ^ lid);
+    P.on = s < q.z && rnd(P.k) < CAR_KEEP;
     P.pos = vec3f(s, ROADY, q.x); P.yaw = select(PI, 0.0, fw); P.pitch = 0.0;
+    return P;
+  }
+  let offs = array<f32, 4>(-5.8, -2.2, 2.2, 5.8);
+  let off = offs[u32(code - 1.0) % 4u];
+  let xc = q.x - off; let o = abs(off); let v = abs(sp);
+  let e0 = q.y; let e1 = q.z;
+  let has0 = e0 > -1e6; let has1 = e1 < 1e6;
+  let zlo = max(org, e0); let zhi = min(org + CHUNK, e1);
+  var x = q.x; var z = 0.0; var yaw = select(PI * 0.5, -PI * 0.5, fw); var turning = false;
+  if (!has0 && !has1) {
+    let lid = pcg(bitcast<u32>(i32(round(q.x * 4.0))) ^ select(0x9e3779b9u, 0x7f4a7c15u, fw));
+    let base = rnd(lid) * CAR_STEP + sp * t;
+    let k0 = ceil((zlo - base) / CAR_STEP);
+    z = base + (k0 + slot) * CAR_STEP;
+    P.k = pcg(bitcast<u32>(i32(k0 + slot)) ^ lid);
+    P.on = z < zhi && rnd(P.k) < CAR_KEEP;
   } else {
-    let d = select(-0.5, 0.5, fw);
-    P.yaw = select(PI * 0.5, -PI * 0.5, fw);
-    if (tun) {
-      P.pos = vec3f(q.x, ROADY + tunnelY(xc, s), s);
-      P.pitch = atan(tunnelY(xc, s + d) - tunnelY(xc, s - d));
+    let lid = pcg(bitcast<u32>(i32(round(xc * 4.0))) ^ pcg(bitcast<u32>(i32(round(o * 10.0)))) ^ 0x2545f491u);
+    let arc = PI * o; let zA = e0 + o; let zB = e1 - o; let S = zB - zA;
+    var per = 0.0; var step = CAR_STEP; var ulo = 0.0; var uhi = 0.0;
+    if (has0 && has1) {
+      per = 2.0 * S + 2.0 * arc;
+      step = per / max(1.0, floor(per / CAR_STEP));
+      if (fw) { ulo = max(zlo, zA) - zA; uhi = min(zhi, zB) - zA; if (zlo <= zB && zB < zhi) { uhi = S + arc; } }
+      else { ulo = S + arc + zB - min(zhi, zB); uhi = S + arc + zB - max(zlo, zA); if (zlo <= zA && zA < zhi) { uhi = per; } }
+    } else if (has1) {
+      if (fw) { ulo = zlo - zB; uhi = min(zhi, zB) - zB; if (zlo <= zB && zB < zhi) { uhi = arc; } }
+      else { ulo = arc + zB - min(zhi, zB); uhi = arc + zB - zlo; }
     } else {
-      P.pos = vec3f(q.x, ROADY + bridgeH(xc, s), s);
-      P.pitch = atan(bridgeH(xc, s + d) - bridgeH(xc, s - d));
+      if (fw) { ulo = arc + max(zlo, zA) - zA; uhi = arc + zhi - zA; }
+      else { ulo = zA - zhi; uhi = zA - max(zlo, zA); if (zlo <= zA && zA < zhi) { uhi = arc; } }
     }
+    var phase = rnd(lid) * step + v * t;
+    if (per > 0.0) { phase = phase - floor(phase / per) * per; }
+    let kk = ceil((ulo - phase) / step) + slot;
+    let u = phase + kk * step;
+    var id = kk;
+    if (per > 0.0) { let N = round(per / step); id = kk - floor(kk / N) * N; }
+    P.k = pcg(bitcast<u32>(i32(id)) ^ lid);
+    P.on = u < uhi && rnd(P.k) < CAR_KEEP;
+    // where u is: on the +z lane, round the turn at e1, back on the -z lane, round the turn at e0
+    var w = u; var seg = 0;   // 0 +z lane, 1 turn at e1, 2 -z lane, 3 turn at e0
+    if (has0 && has1) {
+      if (u < S) { seg = 0; z = zA + u; } else if (u < S + arc) { seg = 1; w = u - S; }
+      else if (u < 2.0 * S + arc) { seg = 2; z = zB - (u - S - arc); } else { seg = 3; w = u - 2.0 * S - arc; }
+    } else if (has1) {
+      if (u < 0.0) { seg = 0; z = zB + u; } else if (u < arc) { seg = 1; } else { seg = 2; z = zB - (u - arc); }
+    } else {
+      if (u < 0.0) { seg = 2; z = zA - u; } else if (u < arc) { seg = 3; } else { seg = 0; z = zA + (u - arc); }
+    }
+    let th = w / o;
+    if (seg == 0) { x = xc - o; yaw = -PI * 0.5; }
+    else if (seg == 2) { x = xc + o; yaw = PI * 0.5; }
+    else if (seg == 1) { turning = true; x = xc - o * cos(th); z = zB + o * sin(th); yaw = atan2(-cos(th), sin(th)); }
+    else { turning = true; x = xc + o * cos(th); z = zA - o * sin(th); yaw = atan2(cos(th), -sin(th)); }
+  }
+  P.yaw = yaw;
+  if (turning) { P.pos = vec3f(x, ROADY, z); P.pitch = 0.0; }
+  else {
+    let d = select(-0.5, 0.5, yaw < 0.0);
+    P.pos = vec3f(x, ROADY + bridgeH(xc, z), z);
+    P.pitch = atan(bridgeH(xc, z + d) - bridgeH(xc, z - d));
   }
   return P;
 }
+// a north-south car's instance sits at its piece's centre (its local offsets on top): the piece's origin
+fn carOrigin(I: Inst) -> vec2f { return floor(vec2f(I.m0.w, I.m2.w) / CHUNK) * CHUNK; }
 fn carColor(k: u32) -> vec3f {
   let r = rnd(k ^ 0x51ed27u);
   if (r < 0.1) { return vec3f(0.75, 0.55, 0.05); }   // a taxi
@@ -158,9 +201,12 @@ fn animate(I: Inst, w0: vec3f, n0: vec3f, t: f32) -> AR {
   var r: AR; r.w = w0; r.n = n0; r.em = 1.0; r.cc = vec4f(0.0);
   let a = u32(I.p.y + 0.5);
   if (a == 1u) {          // car: rides its lane's conveyor, climbs the bridges; an empty slot draws nothing
-    let P = carPose(I.q, I.p.w, t);
+    let ns = abs(I.q.w) > 500.0;
+    let org = carOrigin(I);
+    let P = carPose(I.q, I.p.w, t, org.y);
     if (!P.on) { r.w = vec3f(0.0, -1e4, 0.0); r.em = 0.0; return r; }
-    r.w = P.pos + rotY(rotZ(w0, P.pitch), P.yaw); r.n = rotY(rotZ(n0, P.pitch), P.yaw);
+    let lw = select(w0, w0 - vec3f(org.x + CHUNK * 0.5, 0.0, org.y + CHUNK * 0.5), ns);
+    r.w = P.pos + rotY(rotZ(lw, P.pitch), P.yaw); r.n = rotY(rotZ(n0, P.pitch), P.yaw);
     if (I.p.z > 0.5 && I.p.x < 0.5) { r.cc = vec4f(carColor(P.k), 1.0); }
   } else if (a == 2u) {   // train: runs its line from station to station (q: x, ends, speed)
     let L = max(I.q.z - I.q.y, 1.0);
@@ -577,7 +623,6 @@ fn suburbLights(w: vec3f) -> vec3f {
   var ty = 7u; var path = 0.0; var pond = 0.0;
   if (tileOK(w)) {
     ty = u32(textureLoad(layoutTex, vec2i(floor(fract(uv) * SPAN_PX)), 0).r * 255.0 + 0.5);
-    if (ty == 10u) { discard; }   // the open ramp down into a tunnel
     let ls = textureSampleLevel(layoutTex, sampW, uv, 0.0);
     path = ls.g; pond = ls.a;
   }
@@ -606,7 +651,6 @@ fn suburbLights(w: vec3f) -> vec3f {
   return vec4f(applyFog(c, w), 1.0);
 }
 @fragment fn fs_water(i: GO) -> @location(0) vec4f {
-  if (riverDist(i.w.x, i.w.z) > 1.5) { discard; }   // only in a river (not under a tunnel's ramp)
   return vec4f(applyFog(waterColor(i.w, normalize(i.w - u.cam.xyz), i.pos.xy), i.w), 1.0);
 }
 
@@ -650,7 +694,7 @@ struct SO { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1) 
   let anim = u32(I.p.y + 0.5);
   var col = I.col.rgb;
   if (anim == 1u && abs(I.p.z) > 0.5 && k > 0.0) {   // headlights face forward, tail lights back
-    let P = carPose(I.q, I.p.w, u.cam.w);
+    let P = carPose(I.q, I.p.w, u.cam.w, carOrigin(I).y);
     let f = dot(rotY(vec3f(1.0, 0.0, 0.0), P.yaw), normalize(u.cam.xyz - c)) * sign(I.p.z);
     k *= mix(0.1, 1.0, smoothstep(-0.3, 0.7, f));
   }

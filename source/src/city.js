@@ -60,33 +60,49 @@ function bridgeH(x, z) {
   return RIVER.h * k * k * (3 - 2 * k);
 }
 // What carries north-south avenue i over river r: Halvard Bay's suspension bridge at the origin;
-// elsewhere a tunnel now and then (where both banks have room for its portals: it keeps the traffic
-// flowing where there is no bridge), or a bridge of one kind or another, the big ones on wide rivers.
-// a tunnel: the road starts down len m from the bank, is in a covered tunnel from portal m, and runs
-// depth m down under the river (the same profile in carPose, shaders.js)
-const TUNNEL = { len: 54, ramp: 34, portal: 32, depth: 9 };
-function tunnelY(r, xc, z) {
-  const d = Math.abs(z - riverZk(r, xc)) - r.hw, k = clamp((TUNNEL.len - d) / TUNNEL.ramp, 0, 1);
-  return -TUNNEL.depth * k * k * (3 - 2 * k);
-}
+// elsewhere a bridge of one kind or another, the big ones on wide rivers. In a port nothing crosses
+// (the ships need the water): on each bank the avenue ends at the port's gate ('gate').
 function crossingOf(i, r) {
   if (i === 0 && r.k === 0) return 'suspension';
-  const x = aveX(i), rz = riverZk(r, x), u = ih2(i, r.k, 62), half = AVE.w / 2;
-  const room = Math.min(rz - r.hw - (r.zc - r.row + half), r.zc + r.row - half - (rz + r.hw));
-  // in a port there are ships and cranes on the water: no bridges in their way, the avenues go under
-  // (as in Antwerp or Rotterdam); a plain low bridge only where the banks leave no room for the ramps
+  const u = ih2(i, r.k, 62);
   const L = zLinesOf(r.k), A = L.find((l) => l.kind === 'n'), B = L.find((l) => l.kind === 's');
-  if (superblock(i, A, B).kind === 'docks' || superblock(i - 1, A, B).kind === 'docks') return room > TUNNEL.len + 12 ? 'tunnel' : 'girder';
+  if (superblock(i, A, B).kind === 'docks' || superblock(i - 1, A, B).kind === 'docks') return 'gate';
   const uu = (j) => ih2(j, r.k, 62);
-  // never two tunnels side by side; the big bridges (suspension, cable-stayed) are few and far apart,
-  // and arches do not come in a row either
-  if (u < 0.12 && room > TUNNEL.len + 12 && uu(i - 1) >= 0.12) return 'tunnel';
+  // the big bridges (suspension, cable-stayed) are few and far apart, and arches do not come in a row
   const alone = (lo, hi, n) => [-3, -2, -1, 1, 2, 3].slice(3 - n, 3 + n).every((d) => uu(i + d) <= lo || uu(i + d) > hi || u > uu(i + d));
   if (u > 0.955 && r.hw > 55 && alone(0.955, 1, 3)) return 'suspension';
   if (u > 0.84 && u <= 0.955 && r.hw > 45 && alone(0.84, 0.955, 2)) return 'cable';
   const archBand = (v) => v > 0.68 && v <= 0.84;
   if (archBand(u) && !archBand(uu(i - 1))) return 'arch';
   return 'girder';
+}
+// a port gate: the avenue runs on past the riverside drive to the gate's doors (door m in); the traffic
+// turns round in front of it (turn m in), see aveStretch
+const PORT_GATE = { turn: 17, door: 32 };
+// where avenue i ends at the gates of the port on river k: [north end, south end], or null
+const gateCache = new Map();
+function gateEnds(i, k) {
+  const key = i + ',' + k;
+  let g = gateCache.get(key);
+  if (g !== undefined) return g;
+  const r = riverSlot(k);
+  g = null;
+  if (r.on && crossingOf(i, r) === 'gate') {
+    const L = zLinesOf(k), A = L.find((l) => l.kind === 'n'), B = L.find((l) => l.kind === 's');
+    g = [A.z + PORT_GATE.turn, B.z - PORT_GATE.turn];
+  }
+  if (gateCache.size > 8192) gateCache.clear();
+  gateCache.set(key, g);
+  return g;
+}
+// The stretch of north-south avenue i around z between two port gates: [e0, e1] (+-1e7 where it runs
+// on). Its traffic drives up to one end, turns round and comes back (carPose), so no car ever pops.
+function aveStretch(i, z) {
+  let e0 = -1e7, e1 = 1e7;
+  const k0 = riverK(z);
+  for (let k = k0 - 1; k <= k0 + 25; k++) { const g = gateEnds(i, k); if (g && g[0] >= z) { e1 = g[0]; break; } }
+  for (let k = k0 + 1; k >= k0 - 25; k--) { const g = gateEnds(i, k); if (g && g[1] <= z) { e0 = g[1]; break; } }
+  return [e0, e1];
 }
 function inRiver(x, z) { const r = riverAt(z); return !!r && Math.abs(z - riverZk(r, x)) < r.hw + 0.5; }
 
