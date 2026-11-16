@@ -2,140 +2,199 @@
 <html lang=en>
 <head>
 <meta charset=utf-8>
-<title>Sodium Sky · FPV</title>
-<meta name=viewport content="width=device-width,initial-scale=1">
-<meta name=theme-color content=#07090c>
+<title>RetroFPV · Betaflight in the loop</title>
+<meta name=viewport content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name=theme-color content=#000000>
 <style>
-/* Sodium Sky. The class on <body> is the state of the page:
-   l = loading, m = menu, g = flying (g ov while libfpv's overlay is open), l e = failed to start */
+/* RetroFPV. The class on <body> is the state of the page:
+   l = loading, m = menu, g = flying (g ov while libfpv's overlay is open), l e = failed to start.
+   <html class=touch> on phones and tablets: sticks on the screen.
+   The look: Betaflight's analog OSD (its own font, white with a black edge) over an analog feed
+   (scan lines, snow, a rolling bar) while the menus are up. */
+@font-face { font-family: RetroOSD; src: url(data:font/ttf;base64,/*RETRO_OSD_FONT*/) format('truetype'); }
 :root {
-  --amber: #ffad3b; --amber-d: #ffad3b55; --teal: #3fe0c5; --ink: #e9edf2; --dim: #8b96a3;
-  --panel: #07090cd9; --line: #ffad3b40;
-  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --ink: #f6f6f2; --dim: #a9adb2; --mute: #6e7378; --line: #ffffffa0;
+  --osd: RetroOSD, ui-monospace, Menlo, Consolas, monospace;
+  /* the OSD's black edge: one pixel of the font all round, and a touch of colour fringing */
+  --edge: .09em 0 #000, -.09em 0 #000, 0 .09em #000, 0 -.09em #000, .09em .09em #000, -.09em -.09em #000, .09em -.09em #000, -.09em .09em #000,
+          .16em 0 #ff30304a, -.16em 0 #30e0ff4a;
 }
-html { background: #07090c; }
+html { background: #000; }
 body {
-  position: fixed; inset: 0; margin: 0; overflow: hidden; background: #07090c;
-  font: 500 clamp(12px, .45vw + .7vh, 17px)/1.45 var(--mono); color: var(--ink);
-  -webkit-user-select: none; user-select: none;
+  position: fixed; inset: 0; margin: 0; overflow: hidden; background: #000;
+  font: 400 clamp(15px, .5vw + .95vh, 23px)/1.55 var(--osd); color: var(--ink); text-transform: uppercase; text-shadow: var(--edge);
+  -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
 }
 canvas { position: absolute; width: 100%; height: 100%; touch-action: none; transition: filter .8s, opacity 1.5s; }
 .g canvas { cursor: none; }
 .g.ov canvas { cursor: default; }
-body:not(.g) #c { filter: brightness(.62) saturate(1.1); }
+/* behind the menus the city is the feed: soft, saturated, a little crushed */
+body:not(.g) #c { filter: brightness(.66) saturate(1.45) contrast(1.18) blur(.7px); }
 .l canvas { opacity: 0; }
 #osd { pointer-events: none; }
+button, input { font-family: var(--osd); text-transform: uppercase; }
 
-/* ---- the menu: a side panel like a flight case, the live map behind it ---- */
+/* ---- the analog feed over the menus: scan lines, snow, a rolling bar, the lens's dark corners ---- */
+#fx { position: fixed; inset: 0; pointer-events: none; z-index: 5; transition: opacity .5s; }
+.g:not(.ov) #fx { opacity: 0; }
+#fx::before { content: ''; position: absolute; inset: 0;
+  background: repeating-linear-gradient(0deg, #0000003a 0 1px, transparent 1px 3px), radial-gradient(ellipse at center, transparent 55%, #000000a8 100%); }
+#fx::after { content: ''; position: absolute; left: 0; right: 0; height: 22vh; top: -22vh;
+  background: linear-gradient(transparent, #ffffff0e 45%, #ffffff16 50%, #ffffff0e 55%, transparent); animation: roll 7.5s linear infinite; }
+@keyframes roll { to { transform: translateY(125vh); } }
+#fx canvas { width: 100%; height: 100%; image-rendering: pixelated; opacity: .055; mix-blend-mode: screen; }
+/* now and then the sync slips a pixel or two */
+#m { animation: sync 9s steps(1) infinite; }
+@keyframes sync { 0%, 61%, 63%, 88%, 89.5% { transform: none; } 61.5% { transform: translateX(2px); } 62.2% { transform: translateX(-1px) skewX(-.4deg); } 88.5% { transform: translateX(-2px); } }
+@media (prefers-reduced-motion: reduce) { #m, #fx::after { animation: none; } }
+
+/* ---- the menu: a page of the OSD's menu over the feed ---- */
 #m { position: absolute; inset: 0; transition: opacity .4s, visibility .4s; }
 .g #m { opacity: 0; visibility: hidden; }
 #panel {
-  position: absolute; left: 0; top: 0; bottom: 0; width: min(31em, 100vw); box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 1.1em; padding: 1.8em 1.6em 1.2em; overflow: auto;
-  background: linear-gradient(90deg, #07090cf2 70%, #07090cb0); border-right: 1px solid var(--line);
+  position: absolute; left: 0; top: 0; bottom: 0; width: min(36em, 100vw); box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 1.1em; padding: max(1.6em, env(safe-area-inset-top)) 1.6em 1.2em max(1.6em, env(safe-area-inset-left)); overflow: auto;
+  background: linear-gradient(90deg, #000000b8 72%, #00000000);
 }
 header { display: flex; align-items: center; gap: .9em; }
-header svg { width: 3.4em; height: 3.4em; flex: none; filter: drop-shadow(0 0 .5em #ffad3b66); }
-h1 { margin: 0; font: 800 2.15em/1 var(--mono); letter-spacing: .12em; color: var(--amber); text-shadow: 0 0 .6em #ffad3b55; }
-h1 span { color: transparent; -webkit-text-stroke: 1.5px var(--teal); margin-left: .35em; text-shadow: none; }
-.tag { margin: .35em 0 0; font-size: .74em; letter-spacing: .22em; text-transform: uppercase; color: var(--dim); }
+header svg { width: 3.2em; height: 3.2em; flex: none; filter: drop-shadow(0 0 1px #000) drop-shadow(0 0 1px #000); }
+h1 { margin: 0; font: 400 2.6em/1 var(--osd); letter-spacing: .02em; color: var(--ink); }
+h1 span { color: var(--dim); }
+.tag { margin: .45em 0 0; font-size: .74em; color: var(--dim); }
 p { margin: 0; }
 #a { display: grid; }
 #a > * { grid-area: 1/1; transition: opacity .6s, visibility .6s; }
 .m #l, .l #g { opacity: 0; visibility: hidden; }
 
-/* loading: a battery charging, cell by cell */
-#p { position: relative; height: 1.3em; margin: .5em 0 .9em; padding: 3px; border: 1px solid var(--amber); border-radius: 3px; }
-#p::after { content: ''; position: absolute; right: -6px; top: 30%; width: 4px; height: 40%; background: var(--amber); }
+/* loading: the OSD's battery, filling cell by cell */
+#p { position: relative; height: 1.2em; margin: .5em 0 .9em; padding: 3px; border: 2px solid var(--ink); box-shadow: 0 0 0 2px #000, inset 0 0 0 2px #000; }
+#p::after { content: ''; position: absolute; right: -8px; top: 28%; width: 5px; height: 44%; background: var(--ink); box-shadow: 0 0 0 2px #000; }
 #b { display: block; height: 100%; transform: scaleX(0); transform-origin: 0; will-change: transform;
-  background: repeating-linear-gradient(90deg, var(--amber) 0 calc(10% - 3px), transparent calc(10% - 3px) 10%); }
-#s, #w { font-size: .82em; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
-#w { margin-top: 1em; color: var(--amber); }
+  background: repeating-linear-gradient(90deg, var(--ink) 0 calc(10% - 3px), transparent calc(10% - 3px) 10%); }
+#s, #w { font-size: .82em; color: var(--dim); }
+#w { margin-top: 1em; color: var(--ink); animation: blink 1.2s steps(1) infinite; }
+@keyframes blink { 50% { opacity: .25; } }
 .e #p { visibility: hidden; }
-.e #s { font-size: 1em; letter-spacing: 0; text-transform: none; color: var(--ink); }
+.e #s { font-size: 1em; color: var(--ink); }
 
 #g { display: flex; flex-direction: column; gap: 1em; }
-.label { font-size: .7em; letter-spacing: .24em; text-transform: uppercase; color: var(--dim); margin-bottom: .45em; }
-.label::before { content: '// '; color: var(--amber); }
+.label { font-size: .78em; color: var(--mute); margin-bottom: .35em; }
+.label::before { content: '-- '; }
+.label::after { content: ' --'; }
 
-/* option rows: a label and a segmented control */
-.opts { display: grid; gap: .35em; }
-.row { display: flex; align-items: center; gap: .3em; }
-.row > span:first-child { flex: 0 0 8.5em; font-size: .72em; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); }
+/* option rows: a label and its values; the chosen one in inverse video, as the OSD highlights it */
+.opts { display: grid; gap: .2em; }
+.row { display: flex; align-items: center; gap: .15em; }
+.row > span:first-child { flex: 0 0 8.6em; font-size: .86em; color: var(--dim); }
+.row > span:first-child::before { content: '\25B6'; display: inline-block; width: 1.1em; color: transparent; text-shadow: none; }
+.row:hover > span:first-child::before, .row:focus-within > span:first-child::before { color: var(--ink); text-shadow: var(--edge); }
 .row button {
-  flex: 1; padding: .5em .3em; border: 1px solid #ffffff1c; border-radius: 3px; background: none; color: var(--ink);
-  font: 600 .78em var(--mono); letter-spacing: .1em; text-transform: uppercase; cursor: pointer; transition: background .12s, border-color .12s;
+  flex: 1; padding: .28em .2em; border: 0; background: none; color: var(--ink); font-size: .86em; cursor: pointer; text-shadow: var(--edge);
 }
-.row button:hover { border-color: var(--amber-d); }
-.row .on { background: var(--amber); border-color: var(--amber); color: #07090c; }
-#ca b { flex: 1.6; text-align: center; font-size: .9em; color: var(--teal); }
-#ca button { flex: .5; }
+.row button:hover { background: #ffffff1a; }
+.row .on { background: var(--ink); color: #000; text-shadow: none; box-shadow: 0 0 0 2px #000; }
+#ca b, #sp b { flex: 1.6; text-align: center; font-weight: 400; font-size: .86em; color: var(--ink); }
+#sp b { flex: 3; }
+#ca button, #sp button { flex: .45; }
 #ca #cad { flex: 1.1; }
 #pn input {
-  flex: 1; min-width: 0; padding: .45em .6em; border: 1px solid #ffffff1c; border-radius: 3px; background: #ffffff08; color: var(--teal);
-  font: 600 .85em var(--mono); letter-spacing: .14em; text-transform: uppercase; outline: none;
+  flex: 1; min-width: 0; padding: .3em .5em; border: 2px solid var(--line); background: #00000060; color: var(--ink);
+  font-size: .86em; outline: none; text-shadow: var(--edge); box-shadow: 0 0 0 1px #000;
 }
-#pn input:focus { border-color: var(--amber-d); }
-.loc { font-size: 1.05em; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--ink); }
-.loc small { display: block; margin-top: .3em; font-size: .68em; font-weight: 500; letter-spacing: .04em; text-transform: none; color: var(--dim); line-height: 1.5; }
-#sp b { flex: 3; text-align: center; font-size: .82em; letter-spacing: .1em; text-transform: uppercase; color: var(--teal); }
-#sp button { flex: .45; }
+#pn input::placeholder { color: var(--mute); }
+#pn input:focus { border-color: var(--ink); }
+.loc { font-size: 1.1em; color: var(--ink); }
+.loc small { display: block; margin-top: .3em; font-size: .66em; color: var(--dim); line-height: 1.6; }
 
-.act { display: flex; gap: .5em; margin-top: .2em; }
-#d, #rb { padding: .85em 1em; border-radius: 3px; font: 800 1em var(--mono); letter-spacing: .2em; text-transform: uppercase; cursor: pointer; }
-#d { flex: 1.6; border: 0; background: var(--amber); color: #07090c; box-shadow: 0 0 1.4em #ffad3b44; }
-#d:hover { filter: brightness(1.1); }
-#rb { flex: 1; border: 1px solid var(--teal); background: none; color: var(--teal); font-size: .8em; }
-#rb:hover { background: #3fe0c514; }
-:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
-#rs { font-size: .74em; letter-spacing: .06em; color: var(--dim); }
-#rs::before { content: '● '; color: #ff5a4f; }
-#rs.ok::before { color: var(--teal); }
+.act { display: flex; gap: .6em; margin-top: .3em; }
+#d, #rb { padding: .6em 1em; font-size: 1.05em; cursor: pointer; color: var(--ink); background: #00000070; border: 2px solid var(--ink); text-shadow: var(--edge); box-shadow: 0 0 0 2px #000, inset 0 0 0 1px #000; }
+#d { flex: 1.6; }
+#d::before { content: '\25B6  '; }
+#d:hover, #rb:hover { background: var(--ink); color: #000; text-shadow: none; }
+#rb { flex: 1; font-size: .8em; border-color: var(--line); }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+#rs { font-size: .76em; color: var(--dim); }
+#rs::before { content: '\25CF '; color: #ff4a3c; animation: blink 1s steps(1) infinite; }
+#rs.ok::before { color: var(--ink); animation: none; }
 
-#f { margin-top: auto; font-size: .66em; line-height: 1.6; color: #6f7a86; }
-#f a { color: #a9b3be; }
+#f { margin-top: auto; font-size: .62em; line-height: 1.7; color: var(--mute); text-transform: none; }
+#f a { color: var(--dim); }
 
-/* the keys, in a small card on the right, framed like a goggle feed */
+/* OSD elements round the edges of the menu screen, as in the goggles */
+#oe { position: absolute; inset: 0; pointer-events: none; font-size: .9em; }
+#oe span { position: absolute; }
+#oe .tl { top: max(1.2em, env(safe-area-inset-top)); right: 38%; }
+#oe .tr { top: max(1.2em, env(safe-area-inset-top)); right: max(1.4em, env(safe-area-inset-right)); }
+#oe .br { bottom: max(1.2em, env(safe-area-inset-bottom)); right: max(1.4em, env(safe-area-inset-right)); }
+#oe .rec::before { content: '\25CF '; color: #ff4a3c; animation: blink 1.4s steps(1) infinite; }
+#oe .x { top: 50%; left: 68%; transform: translate(-50%, -50%); font-size: 1.4em; color: var(--ink); }
+@media (max-width: 900px) { #oe { display: none; } }
+
+/* the keys, in a small framed card on the right */
 #k {
-  position: absolute; right: 1.6em; bottom: 1.6em; display: grid; grid-template-columns: auto auto; gap: .35em 1em;
-  padding: 1em 1.2em; font-size: .74em; color: #c3cad2; background: var(--panel); border-radius: 4px;
+  position: absolute; right: 1.6em; bottom: 3.4em; display: grid; grid-template-columns: auto auto; gap: .3em 1.2em;
+  padding: 1em 1.2em; font-size: .7em; color: var(--dim); background: #00000088; border: 2px solid var(--line); box-shadow: 0 0 0 2px #000;
 }
-#k::before, #k::after { content: ''; position: absolute; width: 1em; height: 1em; border: 2px solid var(--amber); }
-#k::before { left: -1px; top: -1px; border-right: 0; border-bottom: 0; }
-#k::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; }
-#k kbd { display: inline-block; min-width: 1.2em; padding: .05em .4em; margin-right: .15em; border: 1px solid #ffffff33; border-radius: 3px; font: 600 1em var(--mono); color: var(--ink); text-align: center; }
+#k kbd { display: inline-block; min-width: 1.1em; padding: 0 .3em; margin-right: .2em; border: 1px solid var(--line); font: 400 1em var(--osd); color: var(--ink); text-align: center; }
 #k p { display: contents; }
 @media (max-width: 1100px), (max-height: 640px) { #k { display: none; } }
-@media (pointer: coarse) { #k { display: none; } }
+.touch #k { display: none; }
 
 /* in flight */
-#o { position: absolute; top: .6em; right: .6em; display: none; padding: .3em .6em; border: 1px solid var(--amber); border-radius: 3px; background: #07090cc0; color: var(--amber); font: 700 1.3em var(--mono); }
-@media (pointer: coarse) { .g #o { display: block; } }
-#i { position: absolute; bottom: 16%; left: 1.2em; margin: 0; font: .78em/1.6 var(--mono); white-space: pre-wrap; text-shadow: 0 1px 4px #000; pointer-events: none; }
-#v {
-  position: absolute; left: 50%; bottom: 7%; transform: translate(-50%, .5em); padding: .45em 1.1em; border: 1px solid var(--amber-d); border-radius: 3px;
-  background: #07090cc8; font-size: .85em; letter-spacing: .18em; text-transform: uppercase; color: var(--amber);
-  opacity: 0; transition: opacity .3s, transform .3s; pointer-events: none;
-}
-#v.on { opacity: 1; transform: translate(-50%, 0); }
+#o { position: absolute; top: max(.6em, env(safe-area-inset-top)); right: max(.6em, env(safe-area-inset-right)); display: none; z-index: 3; padding: .2em .55em; border: 2px solid var(--ink); background: #00000070; color: var(--ink); font-size: 1.3em; text-shadow: var(--edge); box-shadow: 0 0 0 2px #000; }
+.touch .g #o, .g #o.show { display: block; }
+#i { position: absolute; bottom: 16%; left: 1.2em; margin: 0; font: .76em/1.6 var(--osd); white-space: pre-wrap; text-shadow: var(--edge); pointer-events: none; z-index: 2; }
+/* messages come up like the OSD's warnings: in the middle, blinking for a moment */
+#v { position: absolute; left: 50%; top: 62%; transform: translate(-50%, 0); font-size: 1.15em; color: var(--ink); opacity: 0; pointer-events: none; white-space: nowrap; z-index: 2; }
+#v.on { opacity: 1; animation: blink .5s steps(1) 3; }
 body:not(.g) #v { display: none; }
+
+/* phones on their side: everything a size smaller, so the menu fits */
+@media (max-height: 520px) {
+  body { font-size: 12.5px; }
+  #panel { gap: .55em; padding-top: max(.7em, env(safe-area-inset-top)); width: min(40em, 100vw); }
+  header svg { width: 2.4em; height: 2.4em; }
+  h1 { font-size: 2em; }
+  .loc small, #f, .tag { display: none; }
+  .row button { padding: .18em .2em; }
+  .act { margin-top: 0; }
+  #d, #rb { padding: .4em .8em; }
+}
+
+/* ---- touch sticks: mode 2, like a radio (left: throttle, which stays where it is left, and yaw;
+   right: pitch and roll, which spring back); each half of the screen drives its stick ---- */
+#ts { display: none; position: fixed; inset: 0; z-index: 2; touch-action: none; }
+.touch .g:not(.ov) #ts { display: block; }
+.zone { position: absolute; top: 0; bottom: 0; width: 50%; touch-action: none; }
+#zl { left: 0; } #zr { right: 0; }
+.pad { position: absolute; bottom: max(5vmin, env(safe-area-inset-bottom)); width: 36vmin; height: 36vmin; border: 2px solid #ffffff99; box-shadow: 0 0 0 2px #00000080, inset 0 0 0 2px #00000080; background: #00000026; }
+#zl .pad { left: max(6vmin, env(safe-area-inset-left)); } #zr .pad { right: max(6vmin, env(safe-area-inset-right)); }
+.pad::before, .pad::after { content: ''; position: absolute; background: #ffffff40; }
+.pad::before { left: 50%; top: 8%; bottom: 8%; width: 2px; margin-left: -1px; }
+.pad::after { top: 50%; left: 8%; right: 8%; height: 2px; margin-top: -1px; }
+.knob { position: absolute; left: 50%; top: 50%; width: 11vmin; height: 11vmin; margin: -5.5vmin 0 0 -5.5vmin; border: 3px solid var(--ink); border-radius: 50%; background: #ffffff26; box-shadow: 0 0 0 2px #000; }
+.pad b { position: absolute; top: -1.7em; left: 0; right: 0; text-align: center; font-size: .7em; font-weight: 400; color: var(--dim); }
+#tb { position: absolute; top: max(.6em, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; gap: .5em; z-index: 3; }
+#tb button { padding: .45em .8em; font-size: .8em; color: var(--ink); background: #00000070; border: 2px solid var(--line); text-shadow: var(--edge); box-shadow: 0 0 0 2px #000; touch-action: manipulation; }
+#tb button.on { background: var(--ink); color: #000; text-shadow: none; border-color: var(--ink); }
 </style>
 </head>
 <body class=l>
 <canvas id=c></canvas>
 <canvas id=osd></canvas>
+<div id=fx><canvas id=fxn width=192 height=108></canvas></div>
 <div id=m>
   <aside id=panel>
     <header>
-      <svg viewBox="0 0 64 64" fill=none stroke=#ffad3b stroke-width=2.4 aria-hidden=true>
-        <path d="M18 18 46 46M46 18 18 46" stroke-linecap=round />
-        <circle cx=15 cy=15 r=9 /><circle cx=49 cy=15 r=9 /><circle cx=15 cy=49 r=9 /><circle cx=49 cy=49 r=9 />
-        <rect x=26 y=25 width=12 height=14 rx=2 fill=#07090c />
-        <circle cx=32 cy=29 r=2.2 fill=#3fe0c5 stroke=none />
+      <svg viewBox="0 0 64 64" fill=none stroke=#f6f6f2 stroke-width=3 shape-rendering=crispEdges aria-hidden=true>
+        <path d="M18 18 46 46M46 18 18 46" />
+        <rect x=7 y=7 width=16 height=16 /><rect x=41 y=7 width=16 height=16 /><rect x=7 y=41 width=16 height=16 /><rect x=41 y=41 width=16 height=16 />
+        <rect x=26 y=25 width=12 height=14 fill=#000 />
+        <rect x=30 y=27 width=4 height=4 fill=#f6f6f2 stroke=none />
       </svg>
       <div>
-        <h1>SODIUM<span>SKY</span></h1>
-        <p class=tag>FPV after dark · Betaflight in the loop</p>
+        <h1>RETRO<span>FPV</span></h1>
+        <p class=tag>Analog FPV after dark · Betaflight in the loop</p>
       </div>
     </header>
     <div id=a>
@@ -146,15 +205,14 @@ body:not(.g) #v { display: none; }
           <p class=label>Flight</p>
           <p class=row id=pn><span>Pilot name</span><input id=pni maxlength=16 spellcheck=false autocomplete=off placeholder="ON THE OSD" aria-label="Your name on the OSD"></p>
           <p class=row id=sp><span>Launch</span><button id=spl aria-label="Previous launch spot">◀</button><b id=spn></b><button id=spr aria-label="Next launch spot">▶</button></p>
-          <p class=row id=ca><span>Camera angle</span><button id=cal aria-label="Lower the camera">◀</button><b id=can></b><button id=car aria-label="Raise the camera">▶</button><button id=cad>Quad's</button></p>
+          <p class=row id=ca><span>Cam angle</span><button id=cal aria-label="Lower the camera">◀</button><b id=can></b><button id=car aria-label="Raise the camera">▶</button><button id=cad>Quad's</button></p>
           <p class=row id=t><span>Time</span><button>Dusk</button><button>Night</button><button>Dawn</button></p>
           <p class=row id=r><span>Weather</span><button>Clear</button><button>Rain</button></p>
-          <p class=row id=vm><span>Video</span><button>Analog</button><button>Digital</button></p>
           <p class=row id=sg><span>Video range</span><button>Real</button><button>Unlimited</button></p>
           <p class=row id=am><span>Ambience</span><button>Off</button><button>On</button></p>
           <p class=row id=q><span>Detail</span><button>Low</button><button>Med</button><button>High</button></p>
         </div>
-        <div class=act><button id=d>Fly</button><button id=rb>Setup · F8</button></div>
+        <div class=act><button id=d>Fly</button><button id=rb>Setup [F8]</button></div>
         <p id=rs>No radio found · plug it in as a USB joystick and move a stick</p>
       </div>
     </div>
@@ -164,6 +222,7 @@ body:not(.g) #v { display: none; }
       approach from <a href=https://github.com/Noniv/abyssal-garden target=_blank rel=noopener>Abyssal Garden</a> · GPL-3.0
     </footer>
   </aside>
+  <div id=oe aria-hidden=true><span class=tl>RSSI 99</span><span class="tr rec">REC</span><span class=x>-+-</span><span class=br>4S 16.8V</span></div>
   <div id=k>
     <p><span><kbd>W</kbd><kbd>S</kbd></span><span>Throttle</span></p>
     <p><span><kbd>A</kbd><kbd>D</kbd></span><span>Yaw</span></p>
@@ -177,6 +236,11 @@ body:not(.g) #v { display: none; }
     <p><span><kbd>F8</kbd></span><span>Setup: radio, quad, rates, OSD</span></p>
     <p><span><kbd>Esc</kbd></span><span>Menu</span></p>
   </div>
+</div>
+<div id=ts aria-hidden=true>
+  <div class=zone id=zl><div class=pad><b>Throttle · yaw</b><i class=knob></i></div></div>
+  <div class=zone id=zr><div class=pad><b>Pitch · roll</b><i class=knob></i></div></div>
+  <div id=tb><button id=tarm>Arm</button><button id=tang class=on>Angle</button><button id=tvw>View</button><button id=trs>Reset</button></div>
 </div>
 <button id=o aria-label=Menu>≡</button>
 <p id=v></p>

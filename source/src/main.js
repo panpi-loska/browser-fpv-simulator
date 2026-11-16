@@ -202,7 +202,6 @@ function updateMenuButtons() {
   [...$('r').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === raining));
   [...$('sg').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === unlimited));
   [...$('am').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === audio.ambient));
-  [...$('vm').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === digital));
 }
 function setTime(k) { timeKey = k; const p = loadPrefs(); p.time = k; savePrefs(p); updateMenuButtons(); }
 function setRain(on) { raining = on; applyWind(); const p = loadPrefs(); p.rain = on; savePrefs(p); updateMenuButtons(); }
@@ -227,11 +226,9 @@ $('pni').addEventListener('change', () => {
   applyName();
 });
 $('pni').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); $('pni').blur(); } e.stopPropagation(); });
-// the video link: analog (snow, rolling lines, the OSD in the picture) or digital (HD, 16:9, blocks and freezes)
-let digital = prefs.video === 'digital';
-core.videoMode = digital ? 1 : 0;
-function setVideo(on) { digital = on; core.videoMode = on ? 1 : 0; const p = loadPrefs(); p.video = on ? 'digital' : 'analog'; savePrefs(p); updateMenuButtons(); }
-[...$('vm').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setVideo(i === 1); });
+// the video link is always analog: snow, rolling lines, the OSD in the picture (every drone, whatever
+// its own setting in F8)
+core.videoMode = 0;
 $('cal').onclick = () => setTilt(core.uptilt - 5);
 $('car').onclick = () => setTilt(core.uptilt + 5);
 $('cad').onclick = () => { core.uptilt = -1; updateTilt(); };
@@ -248,6 +245,9 @@ updateMenuButtons();
 // the mouse does not reach them: the settings open only when the pilot asks (F8, the Setup button)
 let overlayAsked = false;
 function enter(withOverlay) {
+  if (touch && !document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+  }
   entered = true; playing = true;
   overlayAsked = !!withOverlay;
   document.activeElement?.blur?.();
@@ -265,6 +265,61 @@ function openMenu() {
   for (const k of held) core.key(k, false);
   held.clear();
   setState('m');
+}
+
+// ---- touch sticks (phones, tablets): mode 2, like a radio. Left: throttle (stays where it is left)
+// and yaw; right: pitch and roll (spring back). Each half of the screen drives its stick. Buttons: arm,
+// angle / acro, the view, back to the launch spot. Sent as channels while flying ----
+const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+if (touch) document.documentElement.classList.add('touch');
+const sticks = { thr: -1, yaw: 0, pitch: 0, roll: 0, arm: false, angle: true, used: false, sent: 0 };
+const expo = (v, e = 0.35) => v * (1 - e) + v * v * v * e;
+function stickZone(zone, left) {
+  const pad = zone.querySelector('.pad'), knob = pad.querySelector('.knob');
+  let id = null;
+  const draw = () => {
+    const x = left ? sticks.yaw : sticks.roll, y = left ? sticks.thr : sticks.pitch;
+    knob.style.left = `${50 + x * 42}%`; knob.style.top = `${50 - y * 42}%`;
+  };
+  const set = (e) => {
+    const r = pad.getBoundingClientRect();
+    const x = clamp(((e.clientX - r.left) / r.width) * 2 - 1, -1, 1) / 0.84, y = clamp(1 - ((e.clientY - r.top) / r.height) * 2, -1, 1) / 0.84;
+    if (left) { sticks.yaw = clamp(x, -1, 1); sticks.thr = clamp(y, -1, 1); } else { sticks.roll = clamp(x, -1, 1); sticks.pitch = clamp(y, -1, 1); }
+    draw();
+  };
+  zone.addEventListener('pointerdown', (e) => { if (id !== null) return; id = e.pointerId; zone.setPointerCapture(id); sticks.used = true; set(e); e.preventDefault(); });
+  zone.addEventListener('pointermove', (e) => { if (e.pointerId === id) set(e); });
+  const up = (e) => { if (e.pointerId !== id) return; id = null; if (left) sticks.yaw = 0; else { sticks.roll = 0; sticks.pitch = 0; } draw(); };
+  zone.addEventListener('pointerup', up); zone.addEventListener('pointercancel', up);
+  draw();
+}
+stickZone($('zl'), true); stickZone($('zr'), false);
+const tbtn = (id, fn) => $(id).addEventListener('click', (e) => { e.stopPropagation(); sticks.used = true; fn(); });
+tbtn('tarm', () => {
+  sticks.arm = !sticks.arm; $('tarm').classList.toggle('on', sticks.arm);
+  // Betaflight arms only with the throttle down: say why when it will not
+  if (sticks.arm) setTimeout(() => { if (sticks.arm && core.frame && !core.frame.armed) toast(sticks.thr > -0.9 ? 'Throttle down to arm' : core.armingText() || 'Not armed'); }, 400);
+});
+tbtn('tang', () => { sticks.angle = !sticks.angle; $('tang').classList.toggle('on', sticks.angle); $('tang').textContent = sticks.angle ? 'Angle' : 'Acro'; toast(sticks.angle ? 'Angle mode' : 'Acro mode'); });
+tbtn('tvw', () => { viewMode = (viewMode + 1) % 3; core.setView(viewMode); toast(VIEWS[viewMode]); });
+tbtn('trs', () => { sticks.arm = false; $('tarm').classList.remove('on'); goSpot(spot); toast('Respawned'); });
+function sendSticks() {
+  if (!touch || !sticks.used || !playing || core.overlayIsOpen) return;
+  // (Betaflight wants to see the arm switch off before it is on: the first frames go with it off)
+  const arm = sticks.arm && ++sticks.sent > 20;
+  core.channels([expo(sticks.roll), expo(sticks.pitch), sticks.thr, expo(sticks.yaw), arm ? 1 : -1, sticks.angle ? 1 : -1, -1, -1]);
+}
+
+// ---- the snow over the menus: a small canvas of noise, stretched, while it shows ----
+const fxc = $('fxn').getContext('2d'), fxImg = fxc.createImageData(192, 108), fx32 = new Uint32Array(fxImg.data.buffer);
+let fxT = 0;
+function snow(dt) {
+  if (playing && !core.overlayIsOpen) return;
+  fxT += dt;
+  if (fxT < 0.045) return;
+  fxT = 0;
+  for (let i = 0; i < fx32.length; i++) { const v = (Math.random() * 255) | 0; fx32[i] = 0xff000000 | (v << 16) | (v << 8) | v; }
+  fxc.putImageData(fxImg, 0, 0);
 }
 $('d').onclick = () => enter(false);
 $('rb').onclick = () => enter(true);
@@ -321,7 +376,7 @@ let lastStatus = '';
 function menuStatus() {
   updateTilt();
   const s = core.inputStatus();
-  let text = 'No radio found · plug it in as a USB joystick and move a stick';
+  let text = touch ? 'Touch sticks on screen · or plug in a radio' : 'No radio found · plug it in as a USB joystick and move a stick';
   if (s.needsSetup) text = 'Radio found · open the settings (F8) to set it up';
   else if (s.source === 'radio') text = `Radio: ${s.name}`;
   else if (s.source === 'gamepad') text = `Gamepad: ${s.name}`;
@@ -350,7 +405,9 @@ function frame(now) {
   }
   if (!entered) orbit(t);
   else {
-    // libfpv steps Betaflight and the physics at 1 kHz in real time inside tick (paused in the menu)
+    // libfpv steps Betaflight and the physics at 1 kHz in real time inside tick (paused in the menu);
+    // the touch sticks go in just before, so they are fresh for every step
+    sendSticks();
     f = core.tick(dt);
     if (f) {
       // unlimited range: the pilot keeps a few metres from the quad (except in the line-of-sight view,
@@ -369,6 +426,7 @@ function frame(now) {
     }
   }
   if (!playing) menuStatus();
+  snow(dt);
   stepEnv(dt);
   R.render(view, env, t);
   const g = goggles.drawMain(core, R.ldr, f, entered && viewMode === 0);

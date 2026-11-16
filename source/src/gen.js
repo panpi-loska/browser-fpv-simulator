@@ -910,6 +910,34 @@ function bridge(K, x, r, w, type, own) {
     }
   }
 }
+// the end of an avenue at the riverside (zd, s: +1 the river lies towards +z): a kerb with bollards
+// across the road, a railing and benches facing the water, lamps; a lawn with trees from there to the
+// promenade (lookoutGround)
+function lookout(K, x, zd, s, r, own) {
+  if (!own(x, zd)) return;
+  const { G, rd } = K, W = AVE.w;
+  K.basic(G.cube, TM.box(x, 0.18, zd + s * 0.3, W, 0.36, 0.6), [0.32, 0.32, 0.33]);
+  K.collider(x - W / 2, 0, zd + s * 0.3 - 0.3, x + W / 2, 0.36, zd + s * 0.3 + 0.3);
+  for (let dx = -W / 2 + 1; dx <= W / 2 - 1; dx += 2.4) {
+    K.basic(G.cyl, TM.box(x + dx, 0.55, zd + s * 1.2, 0.28, 1.1, 0.28), [0.2, 0.2, 0.22]);
+    K.sprite(x + dx, 1.12, zd + s * 1.2, [1, 0.82, 0.55], 1.4, 0.25);
+  }
+  K.collider(x - W / 2, 0, zd + s * 1.2 - 0.15, x + W / 2, 1.1, zd + s * 1.2 + 0.15);
+  for (const dx of [-W / 2 - 1.5, W / 2 + 1.5]) K.streetLamp(x + dx, zd + s * 2, -Math.sign(dx), 0, LAMP, 5.5);
+  // the railing at the bank, a bench or two facing the river
+  const rz = riverZk(r, x), zb = rz - s * (r.hw + 2.5);
+  if ((zb - zd) * s > 8) {
+    K.basic(G.cube, TM.box(x, 1, zb, W + 4, 0.08, 0.08), [0.6, 0.6, 0.62]);
+    for (let dx = -W / 2 - 2; dx <= W / 2 + 2; dx += 2) K.basic(G.cube, TM.box(x + dx, 0.5, zb, 0.06, 1, 0.06), [0.4, 0.4, 0.42]);
+    K.collider(x - W / 2 - 2, 0, zb - 0.1, x + W / 2 + 2, 1.05, zb + 0.1);
+    if (K.full) for (const dx of [-5, 5]) if (rd() < 0.8) K.basic(G.cube, TM.box(x + dx, 0.45, zb - s * 2.5, 2, 0.12, 0.5), [0.25, 0.16, 0.1]);
+    for (let t = 6; (zb - (zd + s * t)) * s > 5; t += 9) for (const dx of [-7, 7]) K.tree(x + dx, zd + s * t, 1);
+  }
+}
+function lookoutGround(K, x, zd, s, r) {
+  const rz = riverZk(r, x), zb = rz - s * r.hw;
+  if ((zb - zd) * s > 1) K.layRect(x - AVE.w / 2, Math.min(zd, zb), x + AVE.w / 2, Math.max(zd, zb), 2);
+}
 // a port's gate at the end of an avenue: the terminal building (dark doorways, a lit band over them,
 // D m deep: it keeps off the quay), a canopy over the gate lanes with a booth and closed barriers;
 // the traffic turns round in front of it. s: +1 the building lies towards +z of its doors, -1 -z
@@ -1043,6 +1071,16 @@ function genChunk(cx, cz, lod, Q) {
       if (xs[a + 1].x < X0 || xs[a].x > X1 || zs[b + 1].z < Z0 || zs[b].z > Z1) continue;
       sbs.push(superblock(xs[a].i, zs[b], zs[b + 1]));
     }
+  // the lawns at the lookouts where avenues end at a river (painted by every piece they reach)
+  for (const { i, x } of xs) {
+    if (x < X0 - 12 || x > X1 + 12) continue;
+    for (const A of zs) {
+      if (A.kind !== 'n' || A.z > Z1 + 400 || A.z < Z0 - 800) continue;
+      const r = riverSlot(A.k);
+      if (crossingOf(i, r) !== 'end') continue;
+      lookoutGround(K, x, A.z + PORT_GATE.stub, 1, r); lookoutGround(K, x, A.z + 2 * r.row - PORT_GATE.stub, -1, r);
+    }
+  }
   // ---- north-south avenues (constant x) ----
   for (let a = 0; a < xs.length; a++) {
     const { i, x } = xs[a];
@@ -1053,11 +1091,17 @@ function genChunk(cx, cz, lod, Q) {
       const r = A.kind === 'n' ? riverSlot(A.k) : null;
       const cross = r ? crossingOf(i, r) : null;
       if (r && cross === 'gate') {
-        // a port: the avenue ends at the gate on each bank (the traffic drives in and out of it)
+        // a port: the avenue ends at the gate on each bank (the traffic turns round in front of it)
         const dN = A.z + PORT_GATE.door, dS = B.z - PORT_GATE.door, rz = riverZk(r, x);
         roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(dN, Z1));
         roadStrip(K, 1, x, AVE.w, 2, Math.max(dS, Z0), Math.min(B.z, Z1));
         portGate(K, x, dN, 1, clamp(rz - r.hw - dN - 6, 10, 30), own); portGate(K, x, dS, -1, clamp(dS - (rz + r.hw) - 6, 10, 30), own);
+      } else if (r && cross === 'end') {
+        // no bridge here: on each bank the avenue ends at a lookout over the river
+        const dN = A.z + PORT_GATE.stub, dS = B.z - PORT_GATE.stub;
+        roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(dN, Z1));
+        roadStrip(K, 1, x, AVE.w, 2, Math.max(dS, Z0), Math.min(B.z, Z1));
+        lookout(K, x, dN, 1, r, own); lookout(K, x, dS, -1, r, own);
       } else if (r) {
         const rz = riverZk(r, x), zA = rz - r.hw - RIVER.ramp, zB = rz + r.hw + RIVER.ramp;
         roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(zA, Z1));
@@ -1068,9 +1112,10 @@ function genChunk(cx, cz, lod, Q) {
       const crosses = [{ pos: A.z, w: AVE.w }, { pos: B.z, w: AVE.w }];
       if (a > 0) for (const j of sbLayout(superblock(xs[a - 1].i, A, B)).edgeJ.x1) crosses.push(j);
       for (const j of sbLayout(superblock(i, A, B)).edgeJ.x0) crosses.push(j);
-      if (r && cross === 'gate') {
-        roadLamps(K, 1, x, AVE.w, A.z, A.z + PORT_GATE.door - 12, own, crosses, MERCURY, step);
-        roadLamps(K, 1, x, AVE.w, B.z - PORT_GATE.door + 12, B.z, own, crosses, MERCURY, step);
+      if (r && (cross === 'gate' || cross === 'end')) {
+        const m = cross === 'gate' ? PORT_GATE.door - 12 : PORT_GATE.stub - 4, lc = cross === 'gate' ? MERCURY : LAMP;
+        roadLamps(K, 1, x, AVE.w, A.z, A.z + m, own, crosses, lc, step);
+        roadLamps(K, 1, x, AVE.w, B.z - m, B.z, own, crosses, lc, step);
       } else if (r) {
         const rz = riverZk(r, x);
         roadLamps(K, 1, x, AVE.w, A.z, rz - r.hw - RIVER.ramp, own, crosses, LAMP, step);

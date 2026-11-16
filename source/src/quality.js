@@ -21,7 +21,7 @@ const LEVELS = {
   },
 };
 const LEVEL_ORDER = ['low', 'medium', 'high'];
-const STORE_KEY = 'sodium-sky';
+const STORE_KEY = 'sodium-sky';   // (the project's first name: kept, so saved settings carry over)
 
 function loadPrefs() {
   try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch { return {}; }

@@ -60,13 +60,17 @@ function bridgeH(x, z) {
   return RIVER.h * k * k * (3 - 2 * k);
 }
 // What carries north-south avenue i over river r: Halvard Bay's suspension bridge at the origin;
-// elsewhere a bridge of one kind or another, the big ones on wide rivers. In a port nothing crosses
-// (the ships need the water): on each bank the avenue ends at the port's gate ('gate').
+// elsewhere a bridge every second or third avenue (each river has its own rhythm), of one kind or
+// another, the big ones on wide rivers; between them the avenue ends at the riverside, at a lookout
+// with room to turn round ('end'). In a port nothing crosses (the ships need the water): on each bank
+// the avenue ends at the port's gate ('gate').
 function crossingOf(i, r) {
   if (i === 0 && r.k === 0) return 'suspension';
   const u = ih2(i, r.k, 62);
   const L = zLinesOf(r.k), A = L.find((l) => l.kind === 'n'), B = L.find((l) => l.kind === 's');
   if (superblock(i, A, B).kind === 'docks' || superblock(i - 1, A, B).kind === 'docks') return 'gate';
+  const per = ih(r.k, 66) < 0.5 ? 2 : 3, off = Math.floor(ih(r.k, 67) * per);
+  if ((((i + off) % per) + per) % per !== 0) return 'end';
   const uu = (j) => ih2(j, r.k, 62);
   // the big bridges (suspension, cable-stayed) are few and far apart, and arches do not come in a row
   const alone = (lo, hi, n) => [-3, -2, -1, 1, 2, 3].slice(3 - n, 3 + n).every((d) => uu(i + d) <= lo || uu(i + d) > hi || u > uu(i + d));
@@ -77,9 +81,10 @@ function crossingOf(i, r) {
   return 'girder';
 }
 // a port gate: the avenue runs on past the riverside drive to the gate's doors (door m in); the traffic
-// turns round in front of it (turn m in), see aveStretch
-const PORT_GATE = { turn: 17, door: 32 };
-// where avenue i ends at the gates of the port on river k: [north end, south end], or null
+// turns round in front of it (turn m in), see aveStretch. A lookout's road ends at stub m in.
+const PORT_GATE = { turn: 17, door: 32, stub: 26 };
+// where avenue i ends at river k (a port's gates or a lookout on each bank): [north end, south end],
+// or null where it crosses
 const gateCache = new Map();
 function gateEnds(i, k) {
   const key = i + ',' + k;
@@ -87,7 +92,8 @@ function gateEnds(i, k) {
   if (g !== undefined) return g;
   const r = riverSlot(k);
   g = null;
-  if (r.on && crossingOf(i, r) === 'gate') {
+  const c = r.on && crossingOf(i, r);
+  if (c === 'gate' || c === 'end') {
     const L = zLinesOf(k), A = L.find((l) => l.kind === 'n'), B = L.find((l) => l.kind === 's');
     g = [A.z + PORT_GATE.turn, B.z - PORT_GATE.turn];
   }

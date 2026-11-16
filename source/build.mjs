@@ -42,7 +42,9 @@ if (min) {
 }
 // libfpv's WebAssembly core (Betaflight + the flight model), built by fpv/build.sh, goes in first, as is
 const core = readFileSync(path.join(here, 'fpv', 'fpvcore.js'), 'utf8');
-const html = tpl.replace('/*SCRIPT*/', () => core + '\n' + code);
+// the menus' font: Betaflight's OSD font as a pixel TTF (fonts/), embedded
+const font = readFileSync(path.join(here, 'fonts', 'RetroOSD.ttf')).toString('base64');
+const html = tpl.replace('/*RETRO_OSD_FONT*/', () => font).replace('/*SCRIPT*/', () => core + '\n' + code);
 writeFileSync(path.join(here, '..', 'index.html'), html);
 const gz = gzipSync(Buffer.from(html), { level: 9 }).length;
 console.log(`index.html: ${(html.length / 1024).toFixed(1)} kB, ${(gz / 1024).toFixed(1)} kB gzipped`);

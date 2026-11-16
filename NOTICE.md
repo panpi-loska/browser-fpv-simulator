@@ -1,6 +1,6 @@
 # Licenses and credits
 
-Sodium Sky (copyright (c) 2026 Tainan Melo) as a whole is licensed under the **GNU General Public License v3.0 or later** (see [LICENSE](LICENSE)),
+RetroFPV (copyright (c) 2026 Tainan Melo; first published as Sodium Sky) as a whole is licensed under the **GNU General Public License v3.0 or later** (see [LICENSE](LICENSE)),
 because it includes libfpv, Betaflight and SimITL, which are GPL-3.0. The source of everything compiled into
 `index.html` is in this repository or in the repositories below, at the versions given.
 

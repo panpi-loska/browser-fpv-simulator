@@ -155,6 +155,15 @@ class FPV {
   mouseWheel(dx, dy) { this.M._host_mouse_wheel(dx, dy); }
   text(s) { const p = this.M.stringToNewUTF8(s); this.M._host_text(p); this.M._free(p); }
   key(code, down) { const k = fpvKey(code); if (k) this.M._host_key(k, down ? 1 : 0); return k; }
+  // sticks and switches from the page (the touch sticks): AETR then AUX1.. (AUX1 arm, AUX2 angle,
+  // AUX3 beeper, AUX4 turtle), -1..1, throttle -1 idle; they win over other inputs while fresh (0.5 s)
+  channels(ch) {
+    const M = this.M;
+    if (!this._ch) this._ch = M._malloc(16 * 4);
+    M.HEAPF32.set(ch, this._ch >> 2);
+    M._host_channels(this._ch, ch.length);
+  }
+  clearChannels() { this.M._host_channels_clear(); }
   setAction(id, label) { const p = this.M.stringToNewUTF8(label || ''); this.M._host_set_action(id, p); this.M._free(p); }
   pollAction() { return this.M._host_poll_action(); }
   inputStatus() {

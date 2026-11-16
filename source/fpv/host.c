@@ -242,6 +242,10 @@ API void host_mouse_button(int b, int down) { fpv_overlay_mouse_button(b, down);
 API void host_mouse_wheel(float dx, float dy) { fpv_overlay_mouse_wheel(dx, dy); }
 API void host_text(const char *utf8) { fpv_overlay_text(utf8); }
 API void host_key(int key, int down) { fpv_input_key(key, down); }
+// sticks and switches from the page (the touch sticks): AETR, AUX1.. in -1..1, throttle -1 idle; while
+// fresher than 0.5 s they take precedence over radios, gamepads and the keyboard
+API void host_channels(const float *ch, int count) { fpv_input_set_channels(ch, (uint32_t)count); }
+API void host_channels_clear(void) { fpv_input_clear_channels(); }
 API void host_set_action(uint32_t id, const char *label) { fpv_overlay_set_action(id, label); }
 API uint32_t host_poll_action(void) { return fpv_overlay_poll_action(); }
 

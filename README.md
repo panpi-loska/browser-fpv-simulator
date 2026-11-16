@@ -1,6 +1,6 @@
-# Sodium Sky — browser FPV simulator
+# RetroFPV — browser FPV simulator
 
-An FPV drone simulator that runs in your browser. Fly a quad through an endless city at dusk with your radio, a gamepad or the keyboard.
+An FPV drone simulator that runs in your browser. Fly a quad through an endless city at dusk with your radio, a gamepad, the keyboard or the touch sticks on a phone.
 
 The quad is flown by **real Betaflight firmware** through [libfpv](https://github.com/hammerill/libfpv), compiled to WebAssembly,
 so rates, PIDs, flight modes and the OSD work like on a real quad. The whole simulator is **one HTML file** and needs a browser
@@ -21,13 +21,14 @@ with **WebGPU** (Chrome or Edge on desktop).
   along the avenues, and now and then two avenues cross at a square with a monument or a fountain.
 - A real skyline: a few big business centres, each with a landmark tower with a lit crown, and smaller office
   clusters between them. Avenues are unevenly spaced, as in a real city. Rivers of different widths wind through
-  town, crossed by girder, arch, cable-stayed and suspension bridges. Ports keep the water free for ships:
-  the avenues end at the port gate, where the traffic turns round.
+  town, crossed now and then by girder, arch, cable-stayed or suspension bridges; elsewhere the avenues end at a
+  lookout on the bank. Ports keep the water free for ships: the avenues end at the port gate. Where an avenue
+  ends, the traffic turns round.
 - Rare places to find: stadiums, rail yards, hospitals with a helipad, universities, cemeteries and golf courses.
 - Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.
-- Analog or digital video, chosen in the menu: analog has the snow and rolling lines of a real analog link, digital is
-  crisp 16:9 HD with blocky breakup. Video breakup at long range can be turned off.
+- Analog video, with the snow and rolling lines of a real analog link, and menus in the look of Betaflight's
+  analog OSD, in its own font. Video breakup at long range can be turned off.
 - Your own pilot name on the OSD, set in the menu.
 - Adjustable camera angle, plus chase and line-of-sight views.
 - Radio setup wizard for RadioMaster Pocket and any EdgeTX / OpenTX / ELRS radio over USB.
@@ -49,6 +50,13 @@ Online, the first load downloads about 0.8 MB. If the page says WebGPU is missin
 2. Move a stick so the browser detects it.
 3. Press **F8**, open the **Radio** tab and follow the wizard (sticks, arm, angle mode, beeper, turtle).
 4. Arm with your switch and fly.
+
+## Phones and tablets
+
+On a touch screen two sticks appear while you fly, laid out like a radio in mode 2: the left one is throttle
+(it stays where you leave it) and yaw, the right one pitch and roll (they spring back). Buttons along the top
+arm and disarm, switch between angle and acro, change the view and take you back to the launch spot.
+Android Chrome with WebGPU works best; the game goes full screen when you press **Fly**.
 
 ## Keyboard
 
@@ -104,6 +112,8 @@ This project builds on the work of others:
 - **[libfpv](https://github.com/hammerill/libfpv)** by hammerill (GPL-3.0): flight model, Betaflight integration, collisions,
   wind, video link, radio input, settings overlay, OSD and motor sound. The goggles shader is a port of its video renderer.
 - **[Betaflight](https://github.com/betaflight/betaflight)** (GPL-3.0): the flight controller firmware.
+- **[Betaflight Configurator](https://github.com/betaflight/betaflight-configurator)** (GPL-3.0): the analog OSD font,
+  turned into the pixel font of the menus (`source/fonts`).
 - **[SimITL](https://github.com/AJ92/SimITL)** by AJ92 (GPL-3.0): the simulation core libfpv is based on.
 - **[Afterglow City](https://github.com/J-o-h-n-M/afterglow-city)** by John (MIT): the original WebGPU renderer, shaders,
   city generator and build script this project started from.
