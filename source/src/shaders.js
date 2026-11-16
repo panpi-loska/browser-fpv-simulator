@@ -79,12 +79,12 @@ fn ihf(a: i32, salt: u32) -> f32 { return rnd(bitcast<u32>(a) ^ pcg(salt)); }
 struct River { on: bool, zc: f32, hw: f32, a1: f32, f1: f32, p1: f32, a2: f32, f2: f32, p2: f32 };
 fn riverSlot(k: i32) -> River {
   var r: River;
-  if (k == 0) { r.on = true; r.zc = RIVER_Z0; r.hw = RIVER_HW; r.a1 = 10.0; r.f1 = 0.0023; r.p1 = 0.7; r.a2 = 5.0; r.f2 = 0.0061; r.p2 = 0.0; return r; }
+  if (k == 0) { r.on = true; r.zc = RIVER_Z0; r.hw = RIVER_HW; r.a1 = 36.0; r.f1 = 0.0036; r.p1 = 0.7; r.a2 = 8.0; r.f2 = 0.0095; r.p2 = 0.0; return r; }
   r.zc = RIVER_Z0 + f32(k) * RIVER_P + (ihf(k, 11u) - 0.5) * 1400.0;
   r.on = ihf(k, 12u) < 0.6;
   r.hw = 40.0 + 18.0 * ihf(k, 19u);
-  r.a1 = 6.0 + 8.0 * ihf(k, 13u); r.f1 = 0.0014 + 0.0016 * ihf(k, 14u); r.p1 = 6.2832 * ihf(k, 15u);
-  r.a2 = 2.0 + 4.0 * ihf(k, 16u); r.f2 = 0.004 + 0.004 * ihf(k, 17u); r.p2 = 6.2832 * ihf(k, 18u);
+  r.a1 = 26.0 + 24.0 * ihf(k, 13u); r.f1 = 0.0026 + 0.0024 * ihf(k, 14u); r.p1 = 6.2832 * ihf(k, 15u);
+  r.a2 = 5.0 + 9.0 * ihf(k, 16u); r.f2 = 0.006 + 0.006 * ihf(k, 17u); r.p2 = 6.2832 * ihf(k, 18u);
   return r;
 }
 // how far (x, z) is from the nearest river's bank (negative: in the water)
@@ -316,7 +316,8 @@ fn shadeBuilding(I: Inst, w: vec3f, n: vec3f, lp: vec3f, V: vec3f) -> vec3f {
       let g = select(vec3f(0.008), sc * shelf * (0.45 + 0.55 * smoothstep(0.3, 3.5, w.y)), on);
       c = g * (1.0 - fr * 0.5) + reflC * 0.6;
     }
-    if (on && w.y > 3.75 && w.y < 4.45 && sf > 0.1 && sf < 0.9) {
+    // a coloured sign over the window: most shops downtown, few where there are few shops
+    if (on && rnd(sh ^ 0x77u) < 0.35 + I.p.w && w.y > 3.75 && w.y < 4.45 && sf > 0.1 && sf < 0.9) {
       let flick = select(1.0, 0.15, rnd(sh ^ 5u) < 0.15 && rnd(sh ^ u32(u.cam.w * 9.0)) < 0.04);
       c = (hue(rnd(sh ^ 0x55u)) * 2.2 + 0.15) * flick;
     }

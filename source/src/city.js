@@ -10,8 +10,9 @@ const ROADY = 0.1;                  // top of the asphalt
 const TRAIN_Y = 14;                 // top of the elevated track
 const BLIMP_Y = 270;
 // rivers run along x, one every ~3 km (not all of them there); each has a riverside row between
-// two drives, 130 m either side of its line, with bridges where the avenues cross
-const RIVER = { hw: 55, ramp: 45, h: 7, level: -0.8, period: 3000, z0: 150, row: 130 };
+// two drives, 175 m either side of its line, with bridges where the avenues cross. A river winds
+// inside its row, up to amp metres off the line: long bends with smaller wiggles on them
+const RIVER = { hw: 55, ramp: 45, h: 7, level: -0.8, period: 3000, z0: 150, row: 175, amp: 66 };
 // avenues: north-south every ~470 m, east-west between the rivers; streets fill the superblocks between
 const AVE = { period: 470, x0: 150, w: 20 };
 const MAT = { basic: 0, building: 1, emissive: 2, road: 3, sidewalk: 4, foliage: 5, neon: 7, train: 8 };
@@ -35,10 +36,10 @@ function riverSlot(k) {
   if (r) return r;
   // river 0 is Halvard Bay's own, where it always was
   r = k === 0
-    ? { k, zc: RIVER.z0, on: true, hw: RIVER.hw, a1: 10, f1: 0.0023, p1: 0.7, a2: 5, f2: 0.0061, p2: 0 }
+    ? { k, zc: RIVER.z0, on: true, hw: RIVER.hw, a1: 36, f1: 0.0036, p1: 0.7, a2: 8, f2: 0.0095, p2: 0 }
     : { k, zc: RIVER.z0 + k * RIVER.period + (ih(k, 11) - 0.5) * 1400, on: ih(k, 12) < 0.6, hw: 40 + 18 * ih(k, 19),
-        a1: 6 + 8 * ih(k, 13), f1: 0.0014 + 0.0016 * ih(k, 14), p1: 6.2832 * ih(k, 15),
-        a2: 2 + 4 * ih(k, 16), f2: 0.004 + 0.004 * ih(k, 17), p2: 6.2832 * ih(k, 18) };
+        a1: 26 + 24 * ih(k, 13), f1: 0.0026 + 0.0024 * ih(k, 14), p1: 6.2832 * ih(k, 15),
+        a2: 5 + 9 * ih(k, 16), f2: 0.006 + 0.006 * ih(k, 17), p2: 6.2832 * ih(k, 18) };
   if (riverCache.size > 64) riverCache.clear();
   riverCache.set(k, r);
   return r;

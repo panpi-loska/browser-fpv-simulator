@@ -343,8 +343,11 @@ function genBlock(K, sb, blk) {
 
 function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, placed) {
   const { R, rd, Rd, Q } = K;
-  const nl = old ? 0.55 + nlBase * 0.6 : H0 > 30 ? nlBase + (c > 0.42 ? 0.15 : 0) : 0.15 + nlBase * 0.35;
   const sub = blockMix(blk.cx, blk.cz).sub;
+  // among the houses it is quiet: a corner shop or two, warm windows, no neon or billboards
+  const quiet = sb.kind === 'suburb' || sub > 0.5, calm = quiet || sub > 0.25;
+  const nl0 = old ? 0.55 + nlBase * 0.6 : H0 > 30 ? nlBase + (c > 0.42 ? 0.15 : 0) : 0.15 + nlBase * 0.35;
+  const nl = quiet ? Math.min(nl0, 0.2) : calm ? Math.min(nl0, 0.4) : nl0;
   const maxLot = old ? 17 : H0 > 170 ? 70 : H0 > 70 ? 40 : 28 - 6 * sub;
   const styleOpt = old ? { style: rd() < 0.7 ? 2 : 0, tiers: false } : {};
   // a plaza, or a building site with its tower crane (one is always beside Halvard Bay's downtown),
@@ -375,6 +378,8 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
     const g = old ? 0 : H0 > 60 ? 1.5 + r5 * 2.5 : r5 < 0.5 ? 0 : 1 + r5 * 1.5;
     const opt = { ...styleOpt };
     if (old) opt.shop = clamp(nl + R(-0.2, 0.3), 0.2, 1);
+    else if (quiet) opt.shop = R(0.03, 0.14);
+    else if (calm) opt.shop = R(0.08, 0.3);
     const bld = K.building(lot.x0 + g / 2, lot.z0 + g / 2, lot.x1 - g / 2, lot.z1 - g / 2, H, lot.sides, nl, H0, opt);
     placed.push(lot);
     if (bld) {
@@ -622,10 +627,11 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
       K.sprite(x, h - 0.5, zq, MERCURY, 5, 1.2);
       K.splat(x, zq - s * 8, 0.55, 0.8, 0.7, 14);
     }
-    // container stacks between the cranes and the drive
-    const zA = Math.min(edge(x0) - s * 34, back), zB = Math.max(edge(x0) - s * 34, back);
+    // container stacks between the quay edge and the drive (the bank winds: measured at each column)
     for (let x = x0 + 8; x < x1 - 14; x += 14) {
-      for (let z = Math.min(zA, zB) + 2; z < Math.max(zA, zB) - 4; z += 3.2) {
+      const e = s < 0 ? Math.min(edge(x), edge(x + 12)) : Math.max(edge(x), edge(x + 12)), zq = e + s * 8;
+      const zA = Math.min(zq, back), zB = Math.max(zq, back);
+      if ((back - zq) * s > 0) for (let z = zA + 2; z < zB - 4; z += 3.2) {
         if (K.rng() < 0.25) continue;
         const n = 1 + Math.floor(K.rng() * 4), col = pick([[0.5, 0.08, 0.05], [0.08, 0.25, 0.45], [0.55, 0.4, 0.05], [0.12, 0.35, 0.15], [0.45, 0.45, 0.47], [0.6, 0.2, 0.05]]);
         for (let k = 0; k < n; k++) K.basic(G.cube, TM.box(x + 6, 1.3 + k * 2.6, z, 12, 2.55, 2.45), [col[0] * (0.8 + 0.3 * rd()), col[1] * (0.8 + 0.3 * rd()), col[2] * (0.8 + 0.3 * rd())]);
@@ -634,9 +640,15 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
       if (Math.round(x) % 56 < 14) { K.basic(G.cyl, TM.box(x, 9, back, 0.4, 18, 0.4), [0.12, 0.12, 0.13]); K.sprite(x, 18, back, MERCURY, 7, 1.3); K.splat(x, back - s * 10, 0.55, 0.8, 0.7, 16); }
     }
     // a ship moored at the quay, clear of the bridges
-    if (K.rng() < 0.7 && x1 - x0 > 240) {
-      const L = R(110, Math.min(170, x1 - x0 - 90)), cx = (x0 + x1) / 2 + R(-20, 20), zc = rz(cx) + s * (r.hw - 12);
-      const hull = pick([[0.12, 0.13, 0.15], [0.35, 0.08, 0.06], [0.08, 0.15, 0.25]]);
+    // (lined up with the bank where it lies, and only where the bend is gentle enough for the hull)
+    const shipRoll = K.rng(), L = R(90, Math.min(140, x1 - x0 - 90)), cx = (x0 + x1) / 2 + R(-20, 20), hull = pick([[0.12, 0.13, 0.15], [0.35, 0.08, 0.06], [0.08, 0.15, 0.25]]);
+    const zc0 = rz(cx) + s * (r.hw - 14), slope = (rz(cx + 10) - rz(cx - 10)) / 20;
+    let fits = shipRoll < 0.7 && x1 - x0 > 240;
+    for (let t = -L / 2; fits && t <= L / 2; t += 10) fits = s * (rz(cx + t) + s * r.hw - (zc0 + slope * t + s * 9)) > 1.5;
+    if (fits) {
+      K.setFrame(cx, zc0, -Math.atan(slope) || 1e-9);
+      const zc = 0;
+      { const cx = 0;
       K.basic(G.cube, TM.box(cx, 2, zc, L, 9, 16), hull);
       K.collider(cx - L / 2, -3, zc - 8, cx + L / 2, 6.5, zc + 8);
       K.basic(G.cube, TM.box(cx - L * 0.38, 11, zc, 16, 12, 13), [0.75, 0.75, 0.72]);
@@ -648,6 +660,8 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
       }
       for (const dx of [-L / 2, L / 2]) K.sprite(cx + dx, 8, zc, dx < 0 ? [1, 0.1, 0.05] : [0.2, 1, 0.3], 4, 0.6);
       K.sprite(cx - L * 0.38, 19, zc, [1, 1, 1], 5, 0.7, ANIM.blink, 0, rd());
+      }
+      K.clearFrame();
     }
   }
 }
@@ -1022,7 +1036,7 @@ function chunkMesh(boxes, X0, Z0) {
   const X1 = X0 + CHUNK, Z1 = Z0 + CHUNK;
   const r = riverAt(Z0 + CHUNK / 2) || riverAt(Z0) || riverAt(Z1);
   const hw = r ? r.hw + 0.5 : 0;
-  const crosses = r && Math.max(r.zc - 30 - hw, Z0) < Math.min(r.zc + 30 + hw, Z1);
+  const crosses = r && Math.max(r.zc - RIVER.amp - hw, Z0) < Math.min(r.zc + RIVER.amp + hw, Z1);
   if (!crosses) quad([X0, ROADY, Z0], [X0, ROADY, Z1], [X1, ROADY, Z1], [X1, ROADY, Z0], 0);
   else {
     const STEP = 16;
