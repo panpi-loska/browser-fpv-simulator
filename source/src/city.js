@@ -67,18 +67,24 @@ function bridgeH(x, z) {
 function crossingOf(i, r) {
   if (i === 0 && r.k === 0) return 'suspension';
   const u = ih2(i, r.k, 62);
-  const L = zLinesOf(r.k), A = L.find((l) => l.kind === 'n'), B = L.find((l) => l.kind === 's');
-  if (superblock(i, A, B).kind === 'docks' || superblock(i - 1, A, B).kind === 'docks') return 'gate';
+  if (portAt(i, r)) return 'gate';
   const per = ih(r.k, 66) < 0.5 ? 2 : 3, off = Math.floor(ih(r.k, 67) * per);
   if ((((i + off) % per) + per) % per !== 0) return 'end';
   const uu = (j) => ih2(j, r.k, 62);
   // the big bridges (suspension, cable-stayed) are few and far apart, and arches do not come in a row
   const alone = (lo, hi, n) => [-3, -2, -1, 1, 2, 3].slice(3 - n, 3 + n).every((d) => uu(i + d) <= lo || uu(i + d) > hi || u > uu(i + d));
+  // where the railway crosses on the same avenue, the road bridge is a plain one under the rail bridge
+  if (trainCrosses(i, r.k)) return 'girder';
   if (u > 0.955 && r.hw > 55 && alone(0.955, 1, 3)) return 'suspension';
   if (u > 0.84 && u <= 0.955 && r.hw > 45 && alone(0.84, 0.955, 2)) return 'cable';
   const archBand = (v) => v > 0.68 && v <= 0.84;
   if (archBand(u) && !archBand(uu(i - 1))) return 'arch';
   return 'girder';
+}
+// a port at avenue i on river r: the docks on either side of it
+function portAt(i, r) {
+  const L = zLinesOf(r.k), A = L.find((l) => l.kind === 'n'), B = L.find((l) => l.kind === 's');
+  return superblock(i, A, B).kind === 'docks' || superblock(i - 1, A, B).kind === 'docks';
 }
 // a port gate: the avenue runs on past the riverside drive to the gate's doors (door m in); the traffic
 // turns round in front of it (turn m in), see aveStretch. A lookout's road ends at stub m in.
@@ -195,14 +201,82 @@ function coreField(x, z) {
   for (const p of corePeaks(x, z)) c = Math.max(c, p.s * Math.exp(-((x - p.px) ** 2 + (z - p.pz) ** 2) / (p.R * p.R)));
   return c;
 }
-// the elevated lines run along some north-south avenues; industry gathers along them and the rivers
-const hasTrain = (i) => i === -1 || (i !== 0 && ih(i, 61) < 0.16);
+// ---------- the elevated railway ----------
+// Closed loops, as Halvard Bay's line always was: up one avenue (a leg), along an east-west avenue (an
+// end), down another avenue two or three further on, back along another east-west avenue, the corners
+// rounded over the junctions (radius TRAIN.R). Along a pair of legs the loops come one after another, a
+// block apart: one across each river, on its own rail bridge, and one between the rivers. Trains go
+// round on two tracks, one each way, and never stop being somewhere (shaders.js trainPath).
+const TRAIN = { R: 24, o: 1.1, v: 17, car: 16 };
+const trainSeed = (i) => i === -1 || ((i < -4 || i > 2) && ih(i, 61) < 0.16);
+// the west leg of a pair (the next three avenues start none), and how many avenues on its east leg is
+const trainWest = (i) => trainSeed(i) && !trainSeed(i + 1) && !trainSeed(i + 2) && !trainSeed(i + 3);
+const trainSpan = (i) => (i !== -1 && ih(i, 68) < 0.4 && aveX(i + 3) - aveX(i) < 1500 ? 3 : 2);
+// the pair of legs avenue i is one of, [west, east], or null
+function trainPair(i) {
+  if (trainWest(i)) return [i, i + trainSpan(i)];
+  for (const d of [2, 3]) if (trainWest(i - d) && trainSpan(i - d) === d) return [i - d, i];
+  return null;
+}
+const hasTrain = (i) => !!trainPair(i);
+// the pair whose loops span avenue i (a leg or between them), or null
+function trainPairOver(i) {
+  for (let w = i; w >= i - 3; w--) if (trainWest(w) && w + trainSpan(w) >= i) return [w, w + trainSpan(w)];
+  return null;
+}
+// the east-west avenues of slot k south of its river (or of its own line where there is no river)
+const innerLines = (k) => zLinesOf(k).filter((l) => l.kind === '' && l.m >= 1);
+// does pair p's loop across river slot k exist? (never through a port: the ships need the water)
+function riverLoopOK(p, k) {
+  const r = riverSlot(k);
+  if (!innerLines(k).length || !innerLines(k - 1).length) return false;
+  return !(r.on && (portAt(p[0], r) || portAt(p[1], r)));
+}
+const trainCrosses = (i, k) => { const p = trainPair(i); return !!p && riverSlot(k).on && riverLoopOK(p, k); };
+// the loops of pair p that belong to slot k: the one across its river (from the last line of slot k-1
+// to the first past the river), and the one between that river and the next
+const loopCache = new Map();
+function trainLoops(p, k) {
+  const key = p[0] + ',' + k;
+  let out = loopCache.get(key);
+  if (out) return out;
+  out = [];
+  const x0 = aveX(p[0]), x1 = aveX(p[1]), S = innerLines(k), N = innerLines(k - 1);
+  const mk = (a, b, river) => ({ x0, x1, z0: a.z, z1: b.z, p, river, A: a, B: b });
+  const here = riverLoopOK(p, k), next = riverLoopOK(p, k + 1);
+  if (here) out.push(mk(N[N.length - 1], S[0], riverSlot(k).on ? riverSlot(k) : null));
+  const lo = here ? 1 : 0, hi = next ? S.length - 2 : S.length - 1;
+  if (hi - lo >= 1) out.push(mk(S[lo], S[hi], null));
+  if (loopCache.size > 512) loopCache.clear();
+  loopCache.set(key, out);
+  return out;
+}
+// the loops reaching into the rectangle x0..x1, z0..z1
+function loopsNear(x0, z0, x1, z1) {
+  const out = [];
+  for (let i = Math.floor((x0 - 2000 - AVE.x0) / AVE.period) - 3; i <= Math.ceil((x1 - AVE.x0) / AVE.period) + 3; i++) {
+    if (!trainWest(i)) continue;
+    const p = [i, i + trainSpan(i)];
+    if (aveX(p[0]) > x1 + 30 || aveX(p[1]) < x0 - 30) continue;
+    for (let k = riverK(z0) - 1; k <= riverK(z1) + 1; k++)
+      for (const L of trainLoops(p, k)) if (L.z0 < z1 + 30 && L.z1 > z0 - 30) out.push(L);
+  }
+  return out;
+}
+// is the east-west avenue l, where it meets avenue i, an end of a loop? (the loop, or null)
+function loopEndAt(i, l) {
+  const p = trainPairOver(i);
+  if (!p) return null;
+  for (const k of [l.k, l.k + 1]) for (const L of trainLoops(p, k)) if (Math.abs(L.z0 - l.z) < 0.5 || Math.abs(L.z1 - l.z) < 0.5) return L;
+  return null;
+}
+// industry gathers along the railway and the rivers
 function industryPull(x, z) {
   let i = Math.floor((x - AVE.x0) / AVE.period);
   while (aveX(i) > x) i--;
   while (aveX(i + 1) <= x) i++;
   let t = 0;
-  for (const j of [i, i + 1]) if (hasTrain(j)) t = Math.max(t, smooth(320, 90, Math.abs(x - aveX(j))));
+  for (const j of [i, i + 1]) if (trainWest(j)) t = Math.max(t, smooth(320, 90, Math.abs(x - aveX(j))));
   const r = riverAt(z), w = r ? smooth(650, 260, Math.abs(z - r.zc)) : 0;
   return 0.08 * t + 0.04 * w;
 }
@@ -351,6 +425,9 @@ function launchSpots() {
     { name: 'Tower crane', pos: [430, 80, -430], at: [150, 60, -380], mark: 'crane' },
     { name: 'Suspension bridge', pos: [sx + 3.5, ROADY + RIVER.h + 2.2, rz(sx) + 22], at: [sx, 30, rz(sx) - 160] },
   ];
+  // the railway's bridge over Halvard Bay's river, a truss where the road ends at the banks
+  const tl = trainLoops(trainPair(-1), 0).find((L) => L.river);
+  if (tl) { const x = tl.x0, z = riverZk(tl.river, x); spots.push({ name: 'Rail bridge', pos: [x + 45, 2, z - tl.river.hw - 18], at: [x, 17, z] }); }
   // the nearest stadium (from its car park), rail yard (from the end of the tracks) and hospital
   // (on its helipad: a launch high up takes the roof below it)
   for (const [sp, name] of [['stadium', 'Stadium'], ['railyard', 'Rail yard'], ['hospital', 'Hospital helipad']]) {

@@ -24,6 +24,9 @@ with **WebGPU** (Chrome or Edge on desktop).
   town, crossed now and then by girder, arch, cable-stayed or suspension bridges; elsewhere the avenues end at a
   lookout on the bank. Ports keep the water free for ships: the avenues end at the port gate. Where an avenue
   ends, the traffic turns round.
+- An elevated railway that runs in loops, as metro lines do: up one avenue, round a curve over the junction,
+  along a cross avenue and back down another, with stations on every side. It crosses the rivers on its own
+  bridges (a steel truss, or on top of the road bridge), and the trains never stop going round.
 - Rare places to find: stadiums, rail yards, hospitals with a helipad, universities, cemeteries and golf courses.
 - Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.

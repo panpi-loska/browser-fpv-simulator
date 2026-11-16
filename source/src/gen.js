@@ -1005,37 +1005,152 @@ function cableStayed(K, x, r, W) {
       for (const lx of [x - W / 2 + 0.3, x + W / 2 - 0.3]) K.emissive(G.cube, TM.seg(x, top, rz, lx, yd, z, 0.3), [0.8, 0.85, 0.95], 0.7);
     }
 }
-// an elevated line runs above some avenues, from one riverside (or slot) to the next;
-// its trains loop along that stretch (ANIM.train), stations at both ends
-function trainLine(K, x, za, zb, own) {
-  const { G } = K, px = x;
-  for (let z = Math.ceil(za / 4) * 4; z < zb; z += 4) {
-    if (!own(px, z + 2)) continue;
-    K.basic(G.cube, TM.box(px, TRAIN_Y - 0.6, z + 2, 4.3, 1.2, 4.0), [0.16, 0.16, 0.18]);
-    K.collider(px - 2.15, TRAIN_Y - 1.2, z, px + 2.15, TRAIN_Y, z + 4);
-    if (z % 32 === 0) { K.basic(G.cyl, TM.box(px, (TRAIN_Y - 1.2) / 2, z, 1.6, TRAIN_Y - 1.2, 1.6), [0.15, 0.15, 0.16]); K.collider(px - 0.8, 0, z - 0.8, px + 0.8, TRAIN_Y - 1.2, z + 0.8); }
-    if (z % 12 === 0) for (const o of [-2.3, 2.3]) K.sprite(px + o, TRAIN_Y - 0.4, z, [0.4, 0.7, 1.0], 1.8, 0.35);
+// ---------- the elevated railway: a loop (city.js trainLoops) ----------
+const DECK = [0.16, 0.16, 0.18], STEEL = [0.15, 0.15, 0.16], RAIL_LIT = [0.4, 0.7, 1.0];
+// the loop's centre line, piece by piece: four straights (axis 1 the legs, along z; axis 0 the ends) and
+// the four quarter circles between them
+function loopParts(L) {
+  const R = TRAIN.R, { x0, x1, z0, z1 } = L;
+  return {
+    straights: [
+      { axis: 0, c: z0, a: x0 + R, b: x1 - R }, { axis: 1, c: x1, a: z0 + R, b: z1 - R, i: L.p[1] },
+      { axis: 0, c: z1, a: x0 + R, b: x1 - R }, { axis: 1, c: x0, a: z0 + R, b: z1 - R, i: L.p[0] },
+    ],
+    // arc centres, and the angle the quarter starts at (x = cx + R cos g, z = cz + R sin g)
+    arcs: [[x1 - R, z0 + R, -Math.PI / 2], [x1 - R, z1 - R, 0], [x0 + R, z1 - R, Math.PI / 2], [x0 + R, z0 + R, Math.PI]],
+  };
+}
+function pillar(K, x, z, y0) {
+  K.basic(K.G.cyl, TM.box(x, (y0 + TRAIN_Y - 1.2) / 2, z, 1.6, TRAIN_Y - 1.2 - y0, 1.6), STEEL);
+  K.collider(x - 0.8, y0, z - 0.8, x + 0.8, TRAIN_Y - 1.2, z + 0.8);
+}
+// a box along a straight: s along it, t across, sizes the same way
+const alongBox = (axis, c, s, t, y, ls, lt, h) => (axis === 1 ? TM.box(c + t, y, s, lt, h, ls) : TM.box(s, y, c + t, ls, h, lt));
+function station(K, axis, c, sc, own) {
+  const [x, z] = axis === 1 ? [c, sc] : [sc, c];
+  if (!own(x, z)) return;
+  const { G } = K, B = (s, t, y, ls, lt, h) => alongBox(axis, c, sc + s, t, y, ls, lt, h);
+  const col = (s0, t0, s1, t1, y0, y1) => (axis === 1 ? K.collider(c + t0, y0, sc + s0, c + t1, y1, sc + s1) : K.collider(sc + s0, y0, c + t0, sc + s1, y1, c + t1));
+  K.basic(G.cube, B(0, 0, TRAIN_Y - 0.4, 60, 9, 0.8), [0.2, 0.2, 0.22]);
+  K.basic(G.cube, B(0, 0, TRAIN_Y + 5, 60, 10, 0.4), [0.14, 0.14, 0.16]);
+  col(-30, -4.5, 30, 4.5, TRAIN_Y - 0.8, TRAIN_Y); col(-30, -5, 30, 5, TRAIN_Y + 4.8, TRAIN_Y + 5.2);
+  for (const t of [-4.6, 4.6]) for (const s of [-28, 0, 28]) { K.basic(G.cyl, B(s, t, TRAIN_Y + 2.4, 0.3, 0.3, 5), STEEL); col(s - 0.15, t - 0.15, s + 0.15, t + 0.15, TRAIN_Y, TRAIN_Y + 4.8); }
+  for (let s = -26; s <= 26; s += 6.5) for (const t of [-3, 3]) { const [px, pz] = axis === 1 ? [c + t, sc + s] : [sc + s, c + t]; K.sprite(px, TRAIN_Y + 4.6, pz, [0.85, 0.92, 1.0], 4, 0.6); }
+  for (const s of [-30, 30]) K.emissive(G.cube, B(s, 0, TRAIN_Y + 6.5, 0.3, 6, 1.4), [0.3, 0.8, 1.0], 2.5);
+  // a footbridge from each platform over the road to a stair tower at the kerb
+  for (const t of [-1, 1]) {
+    K.basic(G.cube, B(0, t * 7.4, TRAIN_Y - 0.3, 3, 5.8, 0.6), [0.2, 0.2, 0.22]);
+    K.basic(G.cube, B(0, t * 7.4, TRAIN_Y + 1.6, 3, 5.8, 0.1), [0.14, 0.14, 0.16]);
+    col(-1.5, t > 0 ? 4.5 : -10.3, 1.5, t > 0 ? 10.3 : -4.5, TRAIN_Y - 0.6, TRAIN_Y);
+    K.basic(G.cube, B(0, t * 11.4, TRAIN_Y / 2 + 0.6, 3.6, 2.2, TRAIN_Y + 1.2), [0.18, 0.18, 0.2]);
+    col(-1.8, t * 11.4 - 1.1, 1.8, t * 11.4 + 1.1, 0, TRAIN_Y + 1.2);
+    K.emissive(G.cube, B(0, t * 10.27, 3, 1.2, 0.05, 2.2), [0.85, 0.92, 1.0], 1.2);
   }
-  for (const [zs, dz] of [[za + 30, 1], [zb - 30, -1]]) {
-    if (!own(px, zs)) continue;
-    K.basic(G.cube, TM.box(px, TRAIN_Y - 0.4, zs, 9, 0.8, 60), [0.2, 0.2, 0.22]);
-    K.basic(G.cube, TM.box(px, TRAIN_Y + 5, zs, 10, 0.4, 60), [0.14, 0.14, 0.16]);
-    K.collider(px - 4.5, TRAIN_Y - 0.8, zs - 30, px + 4.5, TRAIN_Y, zs + 30);
-    K.collider(px - 5, TRAIN_Y + 4.8, zs - 30, px + 5, TRAIN_Y + 5.2, zs + 30);
-    for (const sx of [-4.6, 4.6]) for (const sz of [-28, 0, 28]) { K.basic(G.cyl, TM.box(px + sx, TRAIN_Y + 2.4, zs + sz, 0.3, 5, 0.3), [0.14, 0.14, 0.16]); K.collider(px + sx - 0.15, TRAIN_Y, zs + sz - 0.15, px + sx + 0.15, TRAIN_Y + 4.8, zs + sz + 0.15); }
-    for (let z = zs - 26; z <= zs + 26; z += 6.5) for (const sx of [-3, 3]) K.sprite(px + sx, TRAIN_Y + 4.6, z, [0.85, 0.92, 1.0], 4, 0.6);
-    K.emissive(G.cube, TM.box(px, TRAIN_Y + 6.5, zs + dz * 30, 6, 1.4, 0.3), [0.3, 0.8, 1.0], 2.5);
+}
+// where a leg crosses its river: on the road bridge's piers (columns stand on the road deck) or, where
+// the road stops at the banks, a steel truss on piers of its own; parapets and lights over the water
+function railBridge(K, x, r, own, i) {
+  const { G } = K, rz = riverZk(r, x), zA = rz - r.hw - RIVER.ramp, zB = rz + r.hw + RIVER.ramp;
+  const road = crossingOf(i, r) === 'girder';
+  for (let z = rz - r.hw + 14; z < rz + r.hw - 10; z += 30) {
+    if (!own(x, z)) continue;
+    const y0 = road ? ROADY + bridgeH(x, z) : -3;
+    K.basic(G.cube, TM.box(x, (y0 + TRAIN_Y - 1.2) / 2, z, road ? 1.8 : 3.0, TRAIN_Y - 1.2 - y0, road ? 1.8 : 4.5), road ? STEEL : [0.1, 0.1, 0.1]);
+    K.collider(x - 0.9, y0, z - 0.9, x + 0.9, TRAIN_Y - 1.2, z + 0.9);
   }
-  const mid = (za + zb) / 2;
-  if (!own(px, mid)) return;
-  const L = zb - za - 60;
-  K.reseed(pcg(Math.round(x) ^ pcg(Math.round(za))));
-  for (let t = 0; t < 2; t++)
-    for (let k = 0; k < 5; k++) {
-      const s0 = (t * L) / 2 - k * 16, q = [px + (t ? 1.1 : -1.1), za + 30, zb - 30, t ? -17 : 17];
-      G.cube.push(TM.box(0, 1.9, 0, 3.0, 3.3, 15), [0.7, 0.72, 0.75, 0], [MAT.train, ANIM.train, K.seed(), s0], q);
-      if (k === 0) for (const o of [-0.9, 0.9]) K.sprite(o, 1.2, 7.6, [1, 0.95, 0.85], 6, 0.5, ANIM.train, 0, s0, q);
+  for (let z = Math.ceil(zA / 8) * 8; z < zB; z += 8) {
+    if (!own(x, z + 4)) continue;
+    // the deck is wider here, to hold the parapets clear of the trains
+    K.basic(G.cube, TM.box(x, TRAIN_Y - 0.75, z + 4, 6.4, 0.9, 8.05), DECK);
+    K.collider(x - 3.2, TRAIN_Y - 1.2, z, x + 3.2, TRAIN_Y - 0.3, z + 8);
+    for (const t of [-1, 1]) {
+      K.basic(G.cube, TM.box(x + t * 3.05, TRAIN_Y + 0.5, z + 4, 0.25, 1.0, 8.05), [0.24, 0.25, 0.28]);
+      K.collider(x + t * 3.05 - 0.13, TRAIN_Y, z, x + t * 3.05 + 0.13, TRAIN_Y + 1, z + 8);
+      if (z % 24 === 0) K.sprite(x + t * 3.1, TRAIN_Y + 1.2, z + 4, [1, 0.25, 0.15], 2.2, 0.4);
     }
+    if (road) continue;
+    // the truss: chords at the top, a post and a diagonal every 8 m, over the water only
+    if (Math.abs(z + 4 - rz) > r.hw + 6) continue;
+    for (const t of [-1, 1]) {
+      const tx = x + t * 3.05, flip = (Math.round(z / 8) & 1) === 0;
+      K.basic(G.cube, TM.box(tx, TRAIN_Y + 5.5, z + 4, 0.4, 0.5, 8.05), [0.24, 0.25, 0.28]);
+      K.basic(G.cube, TM.box(tx, TRAIN_Y + 2.75, z, 0.35, 5.5, 0.35), [0.24, 0.25, 0.28]);
+      K.basic(G.cube, TM.seg(tx, TRAIN_Y, flip ? z : z + 8, tx, TRAIN_Y + 5.5, flip ? z + 8 : z, 0.25), [0.24, 0.25, 0.28]);
+      K.collider(tx - 0.2, TRAIN_Y, z, tx + 0.2, TRAIN_Y + 5.75, z + 8);
+    }
+    for (let k = 0; k < 2; k++) K.basic(G.cube, TM.box(x, TRAIN_Y + 5.5, z + 4 * k, 6.2, 0.3, 0.3), [0.24, 0.25, 0.28]);
+    if (z % 16 === 0) for (const t of [-1, 1]) K.sprite(x + t * 3.2, TRAIN_Y + 5.9, z, [0.85, 0.92, 1.0], 2.6, 0.45);
+  }
+}
+function trainLoop(K, L, own, X0, Z0, X1, Z1) {
+  const { G } = K, R = TRAIN.R, P = loopParts(L);
+  const inX = (x) => x >= X0 - 40 && x < X1 + 40, inZ = (z) => z >= Z0 - 40 && z < Z1 + 40;
+  // the straights: the deck as one slab per piece, pillars every 32 m (not in a junction, not in the river)
+  for (const S of P.straights) {
+    if (!(S.axis === 1 ? inX(S.c) : inZ(S.c))) continue;
+    const [lo0, hi0] = S.axis === 1 ? [Z0, Z1] : [X0, X1];
+    const lo = Math.max(S.a, lo0), hi = Math.min(S.b, hi0);
+    if (hi > lo && (S.axis === 1 ? S.c >= X0 && S.c < X1 : S.c >= Z0 && S.c < Z1)) {
+      K.basic(G.cube, alongBox(S.axis, S.c, (lo + hi) / 2, 0, TRAIN_Y - 0.6, hi - lo + 0.05, 4.3, 1.2), DECK);
+      if (S.axis === 1) K.collider(S.c - 2.15, TRAIN_Y - 1.2, lo, S.c + 2.15, TRAIN_Y, hi);
+      else K.collider(lo, TRAIN_Y - 1.2, S.c - 2.15, hi, TRAIN_Y, S.c + 2.15);
+    }
+    const cross = S.axis === 1 ? aveZs(S.a - 20, S.b + 20).map((l) => l.z) : aveXs(S.a - 30, S.b + 30).map((v) => v.x);
+    const river = S.axis === 1 && L.river ? riverZk(L.river, S.c) : null;
+    const at = (s) => (S.axis === 1 ? [S.c, s] : [s, S.c]);
+    for (const s of [S.a, S.b, ...Array.from({ length: Math.max(0, Math.floor(S.b / 32) - Math.ceil(S.a / 32) + 1) }, (_, k) => (Math.ceil(S.a / 32) + k) * 32)]) {
+      const [x, z] = at(s);
+      if (!own(x, z) || (s !== S.a && s !== S.b && (s - S.a < 12 || S.b - s < 12))) continue;
+      if (cross.some((c) => Math.abs(c - s) < AVE.w / 2 + 2)) continue;
+      if (river !== null && Math.abs(s - river) < L.river.hw + 4) continue;
+      pillar(K, x, z, 0);
+    }
+    for (let s = Math.ceil(S.a / 12) * 12; s < S.b; s += 12) {
+      const [x, z] = at(s);
+      if (own(x, z)) for (const o of [-2.3, 2.3]) K.sprite(S.axis === 1 ? x + o : x, TRAIN_Y - 0.4, S.axis === 1 ? z : z + o, RAIL_LIT, 1.8, 0.35);
+    }
+    if (river !== null && inX(S.c)) railBridge(K, S.c, L.river, own, S.i);
+  }
+  // the corners: the deck in short pieces round the quarter circle, turned to it
+  for (const [ax, az, g0] of P.arcs) {
+    if (!inX(ax) || !inZ(az)) continue;
+    const n = 10, dg = Math.PI / 2 / n;
+    for (let k = 0; k < n; k++) {
+      const g = g0 + (k + 0.5) * dg, x = ax + R * Math.cos(g), z = az + R * Math.sin(g);
+      if (!own(x, z)) continue;
+      const yaw = Math.atan2(-Math.cos(g), -Math.sin(g));   // along the tangent (-sin g, cos g), as TM.yaw
+      K.basic(G.cube, TM.yaw(x, TRAIN_Y - 0.6, z, R * dg + 0.3, 1.2, 4.3, yaw), DECK);
+      K.obb(x, z, (R * dg + 0.3) / 2, 2.15, yaw, TRAIN_Y - 1.2, TRAIN_Y);
+      if (k % 3 === 1) for (const o of [-2.3, 2.3]) K.sprite(x + o * Math.cos(g), TRAIN_Y - 0.4, z + o * Math.sin(g), RAIL_LIT, 1.8, 0.35);
+    }
+  }
+  // a station on each side, in its longest block (clear of the junctions and the river row)
+  for (const S of P.straights) {
+    const lines = S.axis === 1 ? aveZs(L.z0 - 1, L.z1 + 1) : aveXs(L.x0 - 1, L.x1 + 1).map((v) => ({ z: v.x, kind: '' }));
+    let best = null;
+    for (let j = 0; j + 1 < lines.length; j++) {
+      if (lines[j].kind === 'n') continue;
+      const a = Math.max(lines[j].z + 45, S.a + 10), b = Math.min(lines[j + 1].z - 45, S.b - 10);
+      if (b - a > 0 && (!best || b - a > best[1] - best[0])) best = [a, b];
+    }
+    if (best) station(K, S.axis, S.c, Math.round((best[0] + best[1]) / 2), own);
+  }
+  // the trains: made by the piece the loop's centre is in; each goes round for ever (ANIM.train, q: the
+  // loop), the inner track one way, the outer the other; four cars, each on the curve where it is
+  if (!own((L.x0 + L.x1) / 2, (L.z0 + L.z1) / 2)) return;
+  K.reseed(pcg(Math.round(L.x0) ^ pcg(Math.round(L.z0))));
+  const q = [L.x0, L.z0, L.x1, L.z1];
+  for (const dir of [1, -1]) {
+    const len = 2 * (L.x1 - L.x0 - 2 * R) + 2 * (L.z1 - L.z0 - 2 * R) + 2 * Math.PI * (R - dir * TRAIN.o);
+    const n = Math.max(1, Math.round(len / 1300)), ph = K.rng() * len;
+    for (let t = 0; t < n; t++)
+      for (let k = 0; k < 4; k++) {
+        const s0 = ph + (t * len) / n - k * TRAIN.car;
+        G.cube.push(TM.box(0, 1.9, 0, 3.0, 3.3, 15), [0.7, 0.72, 0.75, 0], [MAT.train, ANIM.train, dir, s0], q);
+        if (k === 0) for (const o of [-0.9, 0.9]) K.sprite(o, 1.2, 7.6, [1, 0.95, 0.85], 6, 0.5, ANIM.train, dir, s0, q);
+        if (k === 3) for (const o of [-0.9, 0.9]) K.sprite(o, 1.2, -7.6, [1, 0.1, 0.06], 3, 0.4, ANIM.train, dir, s0, q);
+      }
+  }
 }
 
 // ---------- what isn't in any piece: the blimp over Halvard Bay (and, added by quad.js, the quad) ----------
@@ -1132,14 +1247,8 @@ function genChunk(cx, cz, lod, Q) {
     }
     for (const [p0, p1] of parts) { const [e0, e1] = aveStretch(i, (p0 + p1) / 2); nsLanes(K, x, p0, p1, e0, e1, X0 + CHUNK / 2, Z0 + CHUNK / 2); }
   }
-  // ---- elevated lines, from one river slot to the next ----
-  for (const { i, x } of xs) {
-    if (x < X0 || x >= X1 || !hasTrain(i)) continue;
-    for (let k = riverK(Z0) - 1; k <= riverK(Z1) + 1; k++) {
-      const a = riverSlot(k), b = riverSlot(k + 1), za = a.zc + (a.on ? a.row : 0), zb = b.zc - (b.on ? b.row : 0);
-      if (zb > Z0 && za < Z1) trainLine(K, x, za, zb, own);
-    }
-  }
+  // ---- the elevated railway: the loops reaching into this piece ----
+  for (const L of loopsNear(X0, Z0, X1, Z1)) trainLoop(K, L, own, X0, Z0, X1, Z1);
   // ---- east-west avenues (constant z) ----
   for (const l of zs) {
     if (l.z < Z0 || l.z >= Z1) continue;
@@ -1153,7 +1262,8 @@ function genChunk(cx, cz, lod, Q) {
       if (above) for (const j of sbLayout(superblock(xs[a].i, l, above)).edgeJ.z0) crosses.push(j);
       const sbN = above ? superblock(xs[a].i, l, above) : null;
       roadLamps(K, 0, l.z, AVE.w, xa, xb, own, crosses, sbN ? lampColor(sbN) : LAMP, step);
-      if (boulevardZ(l)) median(K, 0, l.z, xa, xb, own, sbN ? lampColor(sbN) : LAMP, step);
+      const endL = loopEndAt(xs[a].i, l);
+      if (boulevardZ(l) && !(endL && endL.p[1] > xs[a].i)) median(K, 0, l.z, xa, xb, own, sbN ? lampColor(sbN) : LAMP, step);
       lanes(K, 0, l.z, Math.max(xa, X0), Math.min(xb, X1));
       // crossings with the north-south avenues
       if (own(xa, l.z)) crossing(K, xa, l.z, AVE.w, AVE.w);

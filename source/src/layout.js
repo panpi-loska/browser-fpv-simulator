@@ -250,7 +250,7 @@ function finishBlocks(sb, L) {
 }
 // the corners of this superblock that open onto a square (where two avenues cross, now and then,
 // in town: never by the river, in the suburbs or in industry)
-const squareAt = (i, l) => l.kind === '' && !hasTrain(i) && ih2(i * 7 + 3, l.k * 64 + l.m, 66) < 0.05 && ['downtown', 'midtown', 'residential', 'oldtown'].includes(districtAt(aveX(i), l.z));
+const squareAt = (i, l) => l.kind === '' && !hasTrain(i) && !loopEndAt(i, l) && ih2(i * 7 + 3, l.k * 64 + l.m, 66) < 0.05 && ['downtown', 'midtown', 'residential', 'oldtown'].includes(districtAt(aveX(i), l.z));
 function squareCorners(sb) {
   const out = [];
   for (const [i, l, sx, sz] of [[sb.i, sb.A, 1, 1], [sb.i + 1, sb.A, -1, 1], [sb.i, sb.B, 1, -1], [sb.i + 1, sb.B, -1, -1]]) if (squareAt(i, l)) out.push({ sx, sz });

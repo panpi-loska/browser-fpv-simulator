@@ -45,6 +45,7 @@ const RAMP = ${f(RIVER.ramp)};
 const BRIDGE_H = ${f(RIVER.h)};
 const ROADY = ${f(ROADY)};
 const TRAIN_Y = ${f(TRAIN_Y)};
+const TRAIN_R = ${f(TRAIN.R)}; const TRAIN_O = ${f(TRAIN.o)}; const TRAIN_V = ${f(TRAIN.v)};
 const BLIMP_Y = ${f(BLIMP_Y)};
 
 // ---------- hashing and noise ----------
@@ -187,6 +188,23 @@ fn carPose(q: vec4f, slot: f32, t: f32, org: f32) -> Pose {
   }
   return P;
 }
+// where a train is, s m round its loop (q: x0, z0, x1, z1 of the centre line, corners rounded by TRAIN_R),
+// on the track o m outside the centre line: (x, z, direction). Clockwise from the north end's west corner.
+fn trainPath(q: vec4f, s0: f32, o: f32) -> vec4f {
+  let R = TRAIN_R + o;
+  let x0 = q.x + TRAIN_R; let x1 = q.z - TRAIN_R; let z0 = q.y + TRAIN_R; let z1 = q.w - TRAIN_R;   // the arcs' centres
+  let a = x1 - x0; let b = z1 - z0; let c = 1.5707963 * R;
+  let L = 2.0 * (a + b) + 4.0 * c;
+  var s = s0 - floor(s0 / L) * L;
+  if (s < a) { return vec4f(x0 + s, z0 - R, 1.0, 0.0); } s -= a;
+  if (s < c) { let g = -1.5707963 + s / R; return vec4f(x1 + R * cos(g), z0 + R * sin(g), -sin(g), cos(g)); } s -= c;
+  if (s < b) { return vec4f(x1 + R, z0 + s, 0.0, 1.0); } s -= b;
+  if (s < c) { let g = s / R; return vec4f(x1 + R * cos(g), z1 + R * sin(g), -sin(g), cos(g)); } s -= c;
+  if (s < a) { return vec4f(x1 - s, z1 + R, -1.0, 0.0); } s -= a;
+  if (s < c) { let g = 1.5707963 + s / R; return vec4f(x0 + R * cos(g), z1 + R * sin(g), -sin(g), cos(g)); } s -= c;
+  if (s < b) { return vec4f(x0 - R, z1 - s, 0.0, -1.0); } s -= b;
+  let g = PI + s / R; return vec4f(x0 + R * cos(g), z0 + R * sin(g), -sin(g), cos(g));
+}
 // a north-south car's instance sits at its piece's centre (its local offsets on top): the piece's origin
 fn carOrigin(I: Inst) -> vec2f { return floor(vec2f(I.m0.w, I.m2.w) / CHUNK) * CHUNK; }
 fn carColor(k: u32) -> vec3f {
@@ -208,12 +226,13 @@ fn animate(I: Inst, w0: vec3f, n0: vec3f, t: f32) -> AR {
     let lw = select(w0, w0 - vec3f(org.x + CHUNK * 0.5, 0.0, org.y + CHUNK * 0.5), ns);
     r.w = P.pos + rotY(rotZ(lw, P.pitch), P.yaw); r.n = rotY(rotZ(n0, P.pitch), P.yaw);
     if (I.p.z > 0.5 && I.p.x < 0.5) { r.cc = vec4f(carColor(P.k), 1.0); }
-  } else if (a == 2u) {   // train: runs its line from station to station (q: x, ends, speed)
-    let L = max(I.q.z - I.q.y, 1.0);
-    var s = I.q.y + fract((I.p.w + t * abs(I.q.w)) / L) * L;
-    var yaw = 0.0;
-    if (I.q.w < 0.0) { s = I.q.y + I.q.z - s; yaw = PI; }
-    r.w = vec3f(I.q.x, TRAIN_Y, s) + rotY(w0, yaw); r.n = rotY(n0, yaw);
+  } else if (a == 2u) {   // train car: goes round its loop (q), the inner track one way (p.z > 0), the outer the other
+    let fw = I.p.z > 0.0;
+    let S = (I.p.w + t * TRAIN_V) * select(-1.0, 1.0, fw);
+    let tp = trainPath(I.q, S, select(TRAIN_O, -TRAIN_O, fw));
+    let d = tp.zw * select(-1.0, 1.0, fw);
+    let yaw = atan2(d.x, d.y);
+    r.w = vec3f(tp.x, TRAIN_Y, tp.y) + rotY(w0, yaw); r.n = rotY(n0, yaw);
   } else if (a == 3u) {   // ferris wheel: turns about z through its hub
     let ang = t * I.q.w;
     r.w = I.q.xyz + rotZ(w0 - I.q.xyz, ang); r.n = rotZ(n0, ang);
