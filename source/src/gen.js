@@ -35,7 +35,7 @@ function makeKit(Q, full) {
   const pick = (arr) => arr[Math.floor(rng() * arr.length)];
   const Rd = (a, b) => a + (b - a) * rd(), pickd = (arr) => arr[Math.floor(rd() * arr.length)];
   const G = {}; for (const g of GROUPS) G[g] = new InstList();
-  const boxes = [], splats = [], foot = [], lay = [], polys = [], marks = [];
+  const boxes = [], sounds = [], splats = [], foot = [], lay = [], polys = [], marks = [];
   const wx = (x, z) => (frame ? frame.ox + x * frame.c + z * frame.s : x);
   const wz = (x, z) => (frame ? frame.oz - x * frame.s + z * frame.c : z);
   const xf = (m) => {
@@ -46,7 +46,10 @@ function makeKit(Q, full) {
     return r;
   };
   const K = {
-    G, boxes, splats, foot, lay, polys, marks, full, Q,
+    G, boxes, sounds, splats, foot, lay, polys, marks, full, Q,
+    // what a box sounds like when the quad hits it (audio.js HIT): 0 by its shape (thin: metal, else
+    // masonry), 1 glass, 2 metal, 3 wood; set round the colliders of something that is not masonry
+    snd: 0,
     // every block (and every road) reseeds, so it comes out the same whichever piece asks
     reseed(s) { rng = mulberry32(s); rd = mulberry32((s ^ 0x5bd1e995) >>> 0); seedN = (s % 100000) * 64 + 1; },
     rng: () => rng(), rd: () => rd(), R, pick, Rd, pickd,
@@ -69,9 +72,10 @@ function makeKit(Q, full) {
     collider(x0, y0, z0, x1, y1, z1) {
       const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
       boxes.push(wx(cx, cz), wz(cx, cz), (x1 - x0) / 2, (z1 - z0) / 2, frame ? frame.c : 1, frame ? frame.s : 0, y0, y1);
+      sounds.push(K.snd || (Math.min(x1 - x0, z1 - z0) < 0.9 ? 2 : 0));
     },
     // an oriented box straight in world coordinates, turned by yaw (as TM.yaw)
-    obb(cx, cz, hx, hz, yaw, y0, y1) { boxes.push(cx, cz, hx, hz, Math.cos(yaw), Math.sin(yaw), y0, y1); },
+    obb(cx, cz, hx, hz, yaw, y0, y1) { boxes.push(cx, cz, hx, hz, Math.cos(yaw), Math.sin(yaw), y0, y1); sounds.push(K.snd || (Math.min(hx, hz) < 0.45 ? 2 : 0)); },
   };
   K.sprite = (x, y, z, col, inten, size, anim = 0, dir = 0, phase = 0, q = [0, 0, 0, 0]) =>
     G.sprite.push([1, 0, 0, wx(x, z), 0, 1, 0, y, 0, 0, 1, wz(x, z)], [col[0], col[1], col[2], inten], [size, anim, dir, phase], q);
@@ -133,10 +137,12 @@ function building(K, x0, z0, x1, z1, H, sides, nl, H0, opt) {
       f = n; yb = yt;
     }
   } else tiers.push([x0, z0, x1, z1, 0, H]);
+  K.snd = opt.snd ?? (style === 1 || (style === 3 && wx > 0.8) ? 1 : 0);
   tiers.forEach(([a, b, c, d, yb, yt], k) => {
     K.push(G.cube, TM.box((a + c) / 2, (yb + yt) / 2, (b + d) / 2, c - a, yt - yb, d - b), [...wall, refl], [MAT.building, 0, seed, k === 0 ? shop : 0], [style, fh, cw, wx]);
     K.collider(a, yb, b, c, yt, d);
   });
+  K.snd = 0;
   K.footRect(x0, z0, x1, z1);
   if (shop > 0.3) {
     const spill = (x, z) => K.splat(x, z, 0.5 * shop, 0.36 * shop, 0.22 * shop, 3.5);
@@ -261,19 +267,22 @@ function blockKind(blk) {
 function blockGround(K, blk) {
   const kind = blockKind(blk), pts = blk.poly.map((p) => [p.x, p.z]);
   K.layPoly(pts, kind === 'industrial' ? 0 : 8);
+  if (blk.wedge) {
+    const inner = insetPoly(blk.poly, blk.wedge === 'parking' ? 2.2 : 3);
+    if (inner && blk.wedge !== 'largo') K.layPoly(inner.map((p) => [p.x, p.z]), blk.wedge === 'garden' ? 2 : 0);
+    return;
+  }
   if (kind === 'houses' || kind === 'park') { const inner = insetPoly(blk.poly, 3.6); if (inner) K.layPoly(inner.map((p) => [p.x, p.z]), 2); }
-  if (kind === 'park') { const c = polyBox(blk.poly); K.layRect((c.x0 + c.x1) / 2 - 1.6, c.z0 + 3.6, (c.x0 + c.x1) / 2 + 1.6, c.z1 - 3.6, 8); K.layRect(c.x0 + 3.6, (c.z0 + c.z1) / 2 - 1.6, c.x1 - 3.6, (c.z0 + c.z1) / 2 + 1.6, 8); }
+  if (kind === 'park' && blk.rect) { const c = polyBox(blk.poly); K.layRect((c.x0 + c.x1) / 2 - 1.6, c.z0 + 3.6, (c.x0 + c.x1) / 2 + 1.6, c.z1 - 3.6, 8); K.layRect(c.x0 + 3.6, (c.z0 + c.z1) / 2 - 1.6, c.x1 - 3.6, (c.z0 + c.z1) / 2 + 1.6, 8); }
   if (blk.square && (kind === 'apartments' || kind === 'old')) squareGround(K, blk);
 }
 // a kerb along every edge of a block, and the edge's direction inwards
 function kerbs(K, poly) {
   if (!K.full) return;
-  const ccw = polyArea(poly) > 0;
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i], b = poly[(i + 1) % poly.length], dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz);
     if (L < 0.5) continue;
     K.basic(K.G.cube, TM.yaw((a.x + b.x) / 2, 0.08, (a.z + b.z) / 2, L + 0.3, 0.16, 0.3, Math.atan2(-dz, dx)), [0.15, 0.145, 0.14]);
-    void ccw;
   }
 }
 // points along a polygon's edges, d in from them, every step metres
@@ -316,6 +325,7 @@ function genBlock(K, sb, blk) {
     if (Math.abs(polyArea(blk.poly)) > 60) K.tree(blk.cx, blk.cz, Rd(0.8, 1.2));
     return null;
   }
+  if (blk.wedge) { wedgeBlock(K, blk, inner, lampColor(sb)); return null; }
   if (kind === 'park') { pocketPark(K, inner, lampColor(sb)); return null; }
   // apartments: towers downtown, falling off smoothly towards the suburbs
   const old = kind === 'old', lc = lampColor(sb);
@@ -334,7 +344,7 @@ function genBlock(K, sb, blk) {
   const placed = [];
   let res = null;
   if (kind === 'industrial') industrialLots(K, lp, bx, placed);
-  else if (kind === 'houses') houseLots(K, blk, lp, bx, placed);
+  else if (kind === 'houses') houseLots(K, sb, blk, lp, bx, placed);
   else res = apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, placed);
   const special = res === 'site' || res === 'plaza' || !!sq;
   if (special) res = null;
@@ -352,6 +362,15 @@ function genBlock(K, sb, blk) {
   return res;
 }
 
+// does this lot (in the block's frame) front an avenue? In a block lined up with the avenues its
+// sides tell; in a turned one, a lot on the street side within a building's depth of the avenue
+function onAvenue(K, sb, blk, lot) {
+  if (!blk.ave) return false;
+  if (!K.framed) return !!(lot.sides & blk.ave);
+  if (!lot.sides) return false;
+  const [x, z] = K.toWorld((lot.x0 + lot.x1) / 2, (lot.z0 + lot.z1) / 2), d = AVE.w / 2 + 6 + Math.max(lot.x1 - lot.x0, lot.z1 - lot.z0) * 0.75;
+  return x - sb.x0 < d || sb.x1 - x < d || z - sb.z0 < d || sb.z1 - z < d;
+}
 function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, placed) {
   const { R, rd, Rd, Q } = K;
   const sub = blockMix(blk.cx, blk.cz).sub;
@@ -398,7 +417,7 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
     if (H0 > 120 && r3 < 0.06) H *= 1.4;
     H = Math.min(H, capH);
     // along an avenue the buildings are a little taller and have shops (a main street)
-    const front = !!(lot.sides & blk.ave);
+    const front = onAvenue(K, sb, blk, lot);
     if (front && H0 < 120) H *= 1.25;
     H = Math.max(Math.min(H, Math.max(w, d) * 7.5), old ? 9 + r4 * 3 : 7 + r4 * 6);
     // low-rise where it should be: old town, and next to the houses
@@ -422,15 +441,51 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
 // a small park in one block: lawn, two crossing paths with lamps, trees round the edge, a bench or two
 function pocketPark(K, inner, lc) {
   const { G, rd, Rd, Q } = K, b = polyBox(inner), cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2;
-  for (let x = b.x0 + 4; x < b.x1 - 3; x += 9) for (const z of [b.z0 + 3, b.z1 - 3]) if (rd() < 0.85 * Q.trees + 0.15) K.tree(x + Rd(-1, 1), z, Rd(0.9, 1.3));
-  for (let z = b.z0 + 12; z < b.z1 - 10; z += 9) for (const x of [b.x0 + 3, b.x1 - 3]) if (rd() < 0.85 * Q.trees + 0.15) K.tree(x, z + Rd(-1, 1), Rd(0.9, 1.3));
+  const four = inner.length === 4 && Math.abs(polyArea(inner)) > 0.985 * (b.x1 - b.x0) * (b.z1 - b.z0);
+  if (four) {
+    for (let x = b.x0 + 4; x < b.x1 - 3; x += 9) for (const z of [b.z0 + 3, b.z1 - 3]) if (rd() < 0.85 * Q.trees + 0.15) K.tree(x + Rd(-1, 1), z, Rd(0.9, 1.3));
+    for (let z = b.z0 + 12; z < b.z1 - 10; z += 9) for (const x of [b.x0 + 3, b.x1 - 3]) if (rd() < 0.85 * Q.trees + 0.15) K.tree(x, z + Rd(-1, 1), Rd(0.9, 1.3));
+  } else alongEdges(inner, 3, 9, (x, z) => { if (rd() < 0.85 * Q.trees + 0.15) K.tree(x, z, Rd(0.9, 1.3)); });
   for (const [x, z] of [[cx + 6, cz + 6], [cx - 6, cz - 6], [cx + 6, cz - 6], [cx - 6, cz + 6]]) {
+    if (!insidePoly(inner, x, z)) continue;
     if (K.full) { K.basic(G.cyl, TM.box(x, 2, z, 0.14, 4, 0.14), [0.05, 0.05, 0.06]); K.emissive(G.sphere, TM.box(x, 4.2, z, 0.55, 0.55, 0.55), lc, 2.5); }
     K.sprite(x, 4.2, z, lc, 4, 0.7);
     K.splat(x, z, lc[0] * 0.75, lc[1] * 0.75, lc[2] * 0.75, 6);
   }
   if (K.full) for (const [x, z, a] of [[cx + 3.5, cz + 9, 0], [cx - 9, cz - 3.5, Math.PI / 2]]) K.basic(G.cube, TM.yaw(x, 0.45, z, 1.8, 0.12, 0.5, a), [0.25, 0.16, 0.1]);
   K.basic(G.cyl, TM.box(cx, 0.35, cz, 3.2, 0.7, 3.2), [0.3, 0.29, 0.28]);
+}
+
+// a small odd-shaped block between streets that meet at an angle (blk.wedge): a little paved square
+// with trees round it, a lamp and a bench or a kiosk; a garden; or a car park
+function wedgeBlock(K, blk, inner, lc) {
+  const { G, rd, Rd, Q } = K, c = polyCentroid(inner);
+  if (blk.wedge === 'parking') {
+    const lp = insetPoly(blk.poly, 2.2);
+    if (lp) parkingLot(K, lp, polyBox(lp), lc, false);
+    return;
+  }
+  const garden = blk.wedge === 'garden';
+  alongEdges(inner, garden ? 1.5 : 1.2, garden ? 7 : 10, (x, z) => { if (rd() < 0.9 * Q.trees + 0.1) K.tree(x + Rd(-0.6, 0.6), z + Rd(-0.6, 0.6), Rd(0.8, garden ? 1.4 : 1.1), garden && rd() < 0.25); });
+  if (K.full) { K.basic(G.cyl, TM.box(c.x, 2.3, c.z, 0.16, 4.6, 0.16), [0.05, 0.05, 0.06]); K.emissive(G.sphere, TM.box(c.x, 4.8, c.z, 0.6, 0.6, 0.6), lc, 2.5); }
+  K.sprite(c.x, 4.8, c.z, lc, 4.5, 0.75);
+  K.splat(c.x, c.z, lc[0] * 0.8, lc[1] * 0.8, lc[2] * 0.8, 6.5);
+  if (garden || !K.full) return;
+  const yaw = -blk.angle;
+  if (rd() < 0.5) {   // a kiosk with a lit window
+    const kx = c.x + 3.2 * Math.cos(blk.angle), kz = c.z + 3.2 * Math.sin(blk.angle);
+    if (insidePoly(inner, kx + 1.8, kz + 1.8) && insidePoly(inner, kx - 1.8, kz - 1.8)) {
+      K.basic(G.cube, TM.yaw(kx, 1.4, kz, 2.6, 2.8, 2.2, yaw), [0.1, 0.16, 0.14]);
+      K.basic(G.cube, TM.yaw(kx, 2.95, kz, 3.4, 0.16, 3.0, yaw), [0.07, 0.07, 0.08]);
+      K.emissive(G.cube, TM.yaw(kx - 1.12 * Math.sin(blk.angle), 1.7, kz + 1.12 * Math.cos(blk.angle), 1.8, 0.9, 0.06, yaw), [1.0, 0.8, 0.5], 1.6);
+      K.obb(kx, kz, 1.3, 1.1, yaw, 0, 2.9);
+      K.splat(kx - 2.5 * Math.sin(blk.angle), kz + 2.5 * Math.cos(blk.angle), 0.5, 0.38, 0.22, 3.5);
+    }
+  }
+  for (const d of [-1, 1]) {
+    const bx = c.x - d * 2.6 * Math.cos(blk.angle), bz = c.z - d * 2.6 * Math.sin(blk.angle);
+    if (insidePoly(inner, bx, bz)) K.basic(G.cube, TM.yaw(bx, 0.45, bz, 0.5, 0.12, 1.8, yaw), [0.25, 0.16, 0.1]);
+  }
 }
 
 function plaza(K, x0, z0, x1, z1, lc) {
@@ -445,9 +500,9 @@ function plaza(K, x0, z0, x1, z1, lc) {
 }
 
 // a car park: rows of parked cars, lamps on tall poles (in the block's frame)
-function parkingLot(K, lp, bx, lc) {
+function parkingLot(K, lp, bx, lc, paint = true) {
   const { G, rd, pickd } = K;
-  K.layPoly(lp.map((p) => K.toWorld(p.x, p.z)), 0);
+  if (paint) K.layPoly(lp.map((p) => K.toWorld(p.x, p.z)), 0);
   for (let z = bx.z0 + 4; z < bx.z1 - 4; z += 13)
     for (let x = bx.x0 + 2; x < bx.x1 - 2; x += 2.7)
       for (const zz of [z, z + 5.6]) {
@@ -526,7 +581,7 @@ function industrialLots(K, lp, bx, placed) {
     if (r < 0.55) {
       // a warehouse: long, low, few windows, a lit loading door or two
       const wall = pickd([[0.32, 0.33, 0.34], [0.22, 0.26, 0.3], [0.35, 0.3, 0.24], [0.15, 0.17, 0.2]]);
-      K.building(lot.x0 + g, lot.z0 + g, lot.x1 - g, lot.z1 - g, H, lot.sides, 0.05, H, { style: 3, wall, wx: 0.3, shop: 0.05, tiers: false, fh: R(4.5, 6) });
+      K.building(lot.x0 + g, lot.z0 + g, lot.x1 - g, lot.z1 - g, H, lot.sides, 0.05, H, { style: 3, wall, wx: 0.3, shop: 0.05, tiers: false, fh: R(4.5, 6), snd: 2 });
       for (const sz of [lot.z0 + g, lot.z1 - g]) if (rd() < 0.5) {
         const dx = Rd(lot.x0 + g + 4, lot.x1 - g - 4);
         K.emissive(G.cube, TM.box(dx, 2.4, sz, 4.5, 4.8, 0.3), [0.9, 0.85, 0.7], 0.8);
@@ -542,7 +597,7 @@ function industrialLots(K, lp, bx, placed) {
         const x = n > 1 ? cx + (k % 2 ? 1 : -1) * w / 4 : cx, z = n > 1 ? cz + (k < 2 ? 1 : -1) * d / 4 : cz, h = R(10, 18);
         K.basic(G.cyl, TM.box(x, h / 2, z, rad * 2, h, rad * 2), [0.62, 0.62, 0.6]);
         K.basic(G.cone, TM.box(x, h + 1, z, rad * 2, 2, rad * 2), [0.55, 0.55, 0.53]);
-        K.collider(x - rad * 0.8, 0, z - rad * 0.8, x + rad * 0.8, h + 1.5, z + rad * 0.8);
+        K.snd = 2; K.collider(x - rad * 0.8, 0, z - rad * 0.8, x + rad * 0.8, h + 1.5, z + rad * 0.8); K.snd = 0;
         K.footRect(x - rad, z - rad, x + rad, z + rad);
         K.sprite(x, h + 2.2, z, [1, 0.08, 0.04], 4, 0.6, ANIM.blink, 0, rd());
         if (rd() < 0.5) K.sprite(x + rad, h * 0.6, z, MERCURY, 3, 0.6);
@@ -564,7 +619,7 @@ function industrialLots(K, lp, bx, placed) {
 function house(K, cx, cz, hw, hd, H, style, wall) {
   const { G, R, pickd } = K;
   K.push(G.cube, TM.box(cx, H / 2, cz, hw * 2, H, hd * 2), [...wall, 0.25], [MAT.building, 0, Math.floor(K.rng() * 16000000), 0], [style, H > 5 ? H / 2 : H, R(2.6, 3.4), 0.45]);
-  K.collider(cx - hw, 0, cz - hd, cx + hw, H, cz + hd);
+  K.snd = 3; K.collider(cx - hw, 0, cz - hd, cx + hw, H, cz + hd);
   K.footRect(cx - hw, cz - hd, cx + hw, cz + hd);
   // the roof: a box turned 45 degrees about its ridge and squashed to a gable, its top half above the
   // walls (eaves a little over them), its lower half hidden inside: the ends sit just within the walls
@@ -574,13 +629,14 @@ function house(K, cx, cz, hw, hd, H, style, wall) {
   m[5] *= rh / eave; m[6] *= rh / eave;
   K.basic(G.cube, m, roof);
   K.collider(cx - hw, H, cz - hd * 0.5, cx + hw, H + rh * 0.55, cz + hd * 0.5);
+  K.snd = 0;
 }
 const houseWall = (K, style) => (style ? [K.R(0.3, 0.42), K.R(0.14, 0.2), K.R(0.08, 0.12)] : [K.R(0.38, 0.55), K.R(0.36, 0.5), K.R(0.32, 0.44)]);
 // a block of houses where the suburbs reach into town (in the block's frame). Half of the blocks on an
 // avenue have a row of low shops along it instead of houses (a main street), the houses behind.
-function houseLots(K, blk, lp, bx, placed) {
+function houseLots(K, sb, blk, lp, bx, placed) {
   const { R, rd, Rd, Q } = K;
-  const lots = [], shops = blk.ave && ih(blk.seed, 96) < 0.5 ? blk.ave : 0;
+  const lots = [], shops = blk.ave && ih(blk.seed, 96) < 0.5;
   splitLots(K, bx.x0, bx.z0, bx.x1, bx.z1, 22, 0, 15, lots, 0.05);
   for (const lot0 of lots) {
     const r = K.rng(), hwR = R(8, 12), hdR = R(7, 10), two = K.rng() < 0.3, Hh = two ? R(6, 7) : R(3.2, 3.6), j1 = R(-1, 1), j2 = R(-1, 1), style = K.rng() < 0.5 ? 0 : 2;
@@ -588,7 +644,7 @@ function houseLots(K, blk, lp, bx, placed) {
     if (!lot) continue;
     const w = lot.x1 - lot.x0, d = lot.z1 - lot.z0;
     if (w < 9 || d < 9) continue;
-    if (lot.sides & shops) {
+    if (shops && onAvenue(K, sb, blk, lot)) {
       K.building(lot.x0 + 0.8, lot.z0 + 0.8, lot.x1 - 0.8, lot.z1 - 0.8, R(6.5, 10), lot.sides, 0.15, 10, { style: rd() < 0.5 ? 0 : 2, tiers: false, shop: R(0.22, 0.4) });
       placed.push(lot);
       continue;
@@ -647,6 +703,7 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
     return;
   }
   // docks: quays both sides, container stacks, gantry cranes along the water, a ship or two
+  K.snd = 2;
   for (const s of [-1, 1]) {
     const edge = (x) => rz(x) + s * (r.hw + 1.5), back = s < 0 ? z0 + 6 : z1 - 6;
     // gantry cranes on the quay edge
@@ -699,6 +756,7 @@ function riverRow(K, sb, X0, X1, Z0, Z1, own) {
       K.clearFrame();
     }
   }
+  K.snd = 0;
 }
 
 function ferrisWheel(K, px, pz) {
@@ -778,7 +836,14 @@ function streetPiece(K, ax, az, bx, bz, w, lanesN, extra = 0) {
 // sides on its own lattice, cars parked along the kerbs, clear of every junction
 function straightStreet(K, road, own, lc, step, seed) {
   const dx = road.bx - road.ax, dz = road.bz - road.az, len = Math.hypot(dx, dz), ux = dx / len, uz = dz / len, nx = -uz, nz = ux;
-  const lanesN = 1, at = (s, o) => [road.ax + ux * s + nx * o, road.az + uz * s + nz * o];
+  const lanesN = road.kind === 'boulevard' ? 2 : 1, at = (s, o) => [road.ax + ux * s + nx * o, road.az + uz * s + nz * o];
+  // where it meets an avenue or another street at an angle, plain asphalt runs on into the corner
+  // (a hair lower, so the other road's markings stay on top)
+  for (const [e, s0, s1] of [[road.ext0, -road.ext0, 0], [road.ext1, len, len + road.ext1]]) {
+    if (!(e > 0.3)) continue;
+    const [ax, az] = at(s0, 0), [bx, bz] = at(s1, 0);
+    if (own((ax + bx) / 2, (az + bz) / 2)) K.G.cube.push(TM.yaw((ax + bx) / 2, ROADY - 0.17, (az + bz) / 2, e + 0.1, 0.3, road.w, Math.atan2(-uz, ux)), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, road.w, 1, 2]);
+  }
   const gap = road.split, inGap = (s, m) => gap && s > gap[0] - m && s < gap[1] + m;
   const n = Math.max(1, Math.ceil(len / 32));
   for (let k = 0; k < n; k++) {
@@ -817,7 +882,7 @@ function roadStrip(K, axis, coord, w, lanesN, lo, hi) {
   const c = (lo + hi) / 2, L = hi - lo;
   K.G.cube.push(axis === 0 ? TM.box(c, ROADY - 0.15, coord, L, 0.3, w) : TM.box(coord, ROADY - 0.15, c, w, 0.3, L), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [axis, w, lanesN, 0]);
 }
-function crossing(K, x, z, wx, wz) { K.G.cube.push(TM.box(x, ROADY - 0.12, z, wx, 0.3, wz), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, wx, wz, 1]); }
+function crossing(K, x, z, wx, wz, yaw = 0) { K.G.cube.push(yaw ? TM.yaw(x, ROADY - 0.12, z, wx, 0.3, wz, yaw) : TM.box(x, ROADY - 0.12, z, wx, 0.3, wz), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, wx, wz, 1]); }
 function roadLamps(K, axis, coord, w, lo, hi, own, crosses, col, step) {
   const off = ih(Math.round(coord), 51) * step;
   for (let s = Math.ceil((lo + 8 - off) / step) * step + off; s < hi - 8; s += step) {
@@ -1138,19 +1203,14 @@ function trainLoop(K, L, own, X0, Z0, X1, Z1) {
   // the trains: made by the piece the loop's centre is in; each goes round for ever (ANIM.train, q: the
   // loop), the inner track one way, the outer the other; four cars, each on the curve where it is
   if (!own((L.x0 + L.x1) / 2, (L.z0 + L.z1) / 2)) return;
-  K.reseed(pcg(Math.round(L.x0) ^ pcg(Math.round(L.z0))));
   const q = [L.x0, L.z0, L.x1, L.z1];
-  for (const dir of [1, -1]) {
-    const len = 2 * (L.x1 - L.x0 - 2 * R) + 2 * (L.z1 - L.z0 - 2 * R) + 2 * Math.PI * (R - dir * TRAIN.o);
-    const n = Math.max(1, Math.round(len / 1300)), ph = K.rng() * len;
-    for (let t = 0; t < n; t++)
-      for (let k = 0; k < 4; k++) {
-        const s0 = ph + (t * len) / n - k * TRAIN.car;
-        G.cube.push(TM.box(0, 1.9, 0, 3.0, 3.3, 15), [0.7, 0.72, 0.75, 0], [MAT.train, ANIM.train, dir, s0], q);
-        if (k === 0) for (const o of [-0.9, 0.9]) K.sprite(o, 1.2, 7.6, [1, 0.95, 0.85], 6, 0.5, ANIM.train, dir, s0, q);
-        if (k === 3) for (const o of [-0.9, 0.9]) K.sprite(o, 1.2, -7.6, [1, 0.1, 0.06], 3, 0.4, ANIM.train, dir, s0, q);
-      }
-  }
+  for (const { dir, s0: head } of loopTrains(L))
+    for (let k = 0; k < 4; k++) {
+      const s0 = head - k * TRAIN.car;
+      G.cube.push(TM.box(0, 1.9, 0, 3.0, 3.3, 15), [0.7, 0.72, 0.75, 0], [MAT.train, ANIM.train, dir, s0], q);
+      if (k === 0) for (const o of [-0.9, 0.9]) K.sprite(o, 1.2, 7.6, [1, 0.95, 0.85], 6, 0.5, ANIM.train, dir, s0, q);
+      if (k === 3) for (const o of [-0.9, 0.9]) K.sprite(o, 1.2, -7.6, [1, 0.1, 0.06], 3, 0.4, ANIM.train, dir, s0, q);
+    }
 }
 
 // ---------- what isn't in any piece: the blimp over Halvard Bay (and, added by quad.js, the quad) ----------
@@ -1286,7 +1346,7 @@ function genChunk(cx, cz, lod, Q) {
     }
     const sstep = sb.kind === 'suburb' ? step * 2 : step;
     L.roads.forEach((road, k) => straightStreet(K, road, own, lc, sstep, pcg((sb.seed ^ pcg(k * 7 + 3)) >>> 0)));
-    for (const c of L.crossings) if (own(c.x, c.z)) crossing(K, c.x, c.z, c.wx, c.wz);
+    for (const c of L.crossings) if (own(c.x, c.z)) crossing(K, c.x, c.z, c.wx, c.wz, c.yaw);
     for (const blk of L.blocks) {
       const bb = polyBox(blk.poly);
       if (near(bb.x0, bb.z0, bb.x1, bb.z1)) blockGround(K, blk);
@@ -1299,7 +1359,7 @@ function genChunk(cx, cz, lod, Q) {
     for (let k = 0; k < 2; k++)
       G.beam.push(TM.box(tallest.x, tallest.top + 1, tallest.z, 16, 1600, 16), [0.55, 0.65, 1.0, 0.022], [0, ANIM.beam, K.seed(), K.rng() * 6.3], [K.R(0.12, 0.25) * (k ? -1 : 1), K.R(0.35, 0.6), 0, 0]);
   }
-  const out = { cx, cz, lod, groups: {}, boxes: new Float32Array(K.boxes), marks: K.marks };
+  const out = { cx, cz, lod, groups: {}, boxes: new Float32Array(K.boxes), snd: new Uint8Array(K.sounds), marks: K.marks };
   for (const g of GROUPS) out.groups[g] = G[g].data();
   if (full) {
     out.splats = new Float32Array(K.splats); out.lay = new Float32Array(K.lay); out.polys = new Float32Array(K.polys);

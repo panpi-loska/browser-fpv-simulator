@@ -7,6 +7,7 @@
 // o.still: an abandoned crane that no longer turns; o.col: its paint
 function towerCrane(K, x, z, h, L, yaw, o = {}) {
   const { G, basic, emissive, sprite, rd } = K;
+  K.snd = 2;
   const col = o.col || [0.75, 0.55, 0.08], dark = [col[0] * 0.5, col[1] * 0.5, col[2] * 0.5];
   const spin = o.still ? 0 : 0.03 + rd() * 0.04, q = [x, 0, z, spin];
   // base and mast (fixed)
@@ -60,6 +61,7 @@ function towerCrane(K, x, z, h, L, yaw, o = {}) {
     sprite(x, h - 0.5, z, [1, 0.8, 0.55], 6, 1.2);
     K.splat(x, z, 0.8, 0.6, 0.4, 14);
   }
+  K.snd = 0;
 }
 
 // ---------- a building site: a concrete frame going up, fenced, with work lights and its crane ----------

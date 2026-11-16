@@ -270,6 +270,31 @@ function loopEndAt(i, l) {
   for (const k of [l.k, l.k + 1]) for (const L of trainLoops(p, k)) if (Math.abs(L.z0 - l.z) < 0.5 || Math.abs(L.z1 - l.z) < 0.5) return L;
   return null;
 }
+// the trains of a loop: which way each goes (dir +1 the inner track, clockwise) and where its head
+// is at time 0, in metres round the loop (the same for the piece that draws them and for their sound)
+function loopTrains(L) {
+  const R = TRAIN.R, rng = mulberry32(pcg(Math.round(L.x0) ^ pcg(Math.round(L.z0)))), out = [];
+  for (const dir of [1, -1]) {
+    const len = 2 * (L.x1 - L.x0 - 2 * R) + 2 * (L.z1 - L.z0 - 2 * R) + 2 * Math.PI * (R - dir * TRAIN.o);
+    const n = Math.max(1, Math.round(len / 1300)), ph = rng() * len;
+    for (let t = 0; t < n; t++) out.push({ dir, s0: ph + (t * len) / n });
+  }
+  return out;
+}
+// where a train is, s metres round loop L on the track o m outside the centre line: [x, z]
+// (shaders.js trainPath)
+function trainPos(L, s0, o) {
+  const R = TRAIN.R + o, x0 = L.x0 + TRAIN.R, x1 = L.x1 - TRAIN.R, z0 = L.z0 + TRAIN.R, z1 = L.z1 - TRAIN.R, a = x1 - x0, b = z1 - z0, c = (Math.PI / 2) * R, len = 2 * (a + b) + 4 * c;
+  let s = s0 - Math.floor(s0 / len) * len;
+  if (s < a) return [x0 + s, z0 - R]; s -= a;
+  if (s < c) { const g = -Math.PI / 2 + s / R; return [x1 + R * Math.cos(g), z0 + R * Math.sin(g)]; } s -= c;
+  if (s < b) return [x1 + R, z0 + s]; s -= b;
+  if (s < c) { const g = s / R; return [x1 + R * Math.cos(g), z1 + R * Math.sin(g)]; } s -= c;
+  if (s < a) return [x1 - s, z1 + R]; s -= a;
+  if (s < c) { const g = Math.PI / 2 + s / R; return [x0 + R * Math.cos(g), z1 + R * Math.sin(g)]; } s -= c;
+  if (s < b) return [x0 - R, z1 - s]; s -= b;
+  const g = Math.PI + s / R; return [x0 + R * Math.cos(g), z0 + R * Math.sin(g)];
+}
 // industry gathers along the railway and the rivers
 function industryPull(x, z) {
   let i = Math.floor((x - AVE.x0) / AVE.period);

@@ -7,7 +7,7 @@
 
 function createStreamer(Q, R, core) {
   const key = (cx, cz) => cx + ',' + cz;
-  const chunks = new Map();          // key -> { cx, cz, lod, boxes, marks, raster, obj }
+  const chunks = new Map();          // key -> { cx, cz, lod, boxes, snd (what each box sounds like), marks, raster, obj }
   const inflight = new Map();        // id -> { k, lod, w }
   const want = new Map();            // key -> lod wanted right now (-1: let it go)
   const results = [], dirty = new Set();
@@ -82,7 +82,7 @@ function createStreamer(Q, R, core) {
     const old = chunks.get(k);
     if (old) { R.chunkRemove(k); if (old.obj) core.removeObject(old.obj); if (old.lod === 1 && out.lod === 0) R.clearTile(out.cx, out.cz); }
     R.chunkAdd(k, out.groups);
-    const c = { cx: out.cx, cz: out.cz, lod: out.lod, boxes: out.boxes, marks: out.marks, raster: out.raster || null, obj: 0 };
+    const c = { cx: out.cx, cz: out.cz, lod: out.lod, boxes: out.boxes, snd: out.snd, marks: out.marks, raster: out.raster || null, obj: 0 };
     if (out.lod === 1) {
       c.obj = core.addObject(out.mesh);
       for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { const n = chunks.get(key(out.cx + dx, out.cz + dz)); if (n && n.lod === 1) dirty.add(key(n.cx, n.cz)); }
@@ -185,7 +185,7 @@ function createStreamer(Q, R, core) {
         if (!c) continue;
         // oriented boxes: cx, cz, hx, hz, cos, sin, bottom, top (gen.js)
         const b = c.boxes;
-        for (let i = 0; i < b.length; i += 8) { const e = b[i + 2] + b[i + 3] + r; if (Math.abs(b[i] - x) <= e && Math.abs(b[i + 1] - z) <= e) fn(b, i); }
+        for (let i = 0; i < b.length; i += 8) { const e = b[i + 2] + b[i + 3] + r; if (Math.abs(b[i] - x) <= e && Math.abs(b[i + 1] - z) <= e) fn(b, i, c.snd ? c.snd[i >> 3] : 0); }
       }
   }
   // the highest solid surface under (x, z) that is below y: a roof, a bridge deck, the street or the river
