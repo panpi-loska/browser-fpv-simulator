@@ -56,6 +56,8 @@ function stepEnv(dt) {
   for (const key of SCAL) env[key] += (T[key] - env[key]) * k;
   env.rain = clamp(env.rain + (raining ? 1 : -1) * dt * 0.5, 0, 1);
   env.wet = clamp(env.wet + (raining ? dt * 0.12 : -dt * 0.03), 0, 1);
+  // drops on the lens while it rains, on any camera that is out in it
+  env.lens = env.rain;
 }
 
 // ---- the renderer, Betaflight, then the city around the launch spot ----

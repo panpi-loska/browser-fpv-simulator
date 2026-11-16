@@ -302,7 +302,7 @@ async function createRenderer(canvas, Q, base, onLost) {
       fillU(vpr, mat4Inv(vpr), cr, env, t, [basis.r[0], -basis.r[1], basis.r[2]], [basis.u[0], -basis.u[1], basis.u[2]], [1, RT.rw, RT.rh, 0], [pixA * 2, env.wet, env.beams, 0]);
       device.queue.writeBuffer(uRefl, 0, uData);
     }
-    device.queue.writeBuffer(RT.comp.buf, 16, new Float32Array([env.exposure, t % 1000]));
+    device.queue.writeBuffer(RT.comp.buf, 16, new Float32Array([env.exposure, t % 1000, 0.35, env.lens || 0]));
 
     const enc = device.createCommandEncoder();
     if (PR) {

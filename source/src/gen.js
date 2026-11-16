@@ -105,44 +105,117 @@ function makeKit(Q, full) {
   return K;
 }
 
-// opt: style, wall [r,g,b], shop (0..1), roof (rooftop gear and signs), tiers (setbacks), fh (floor height)
+// ---------- buildings ----------
+// Styles (shaders.js shadeBuilding draws each its own way): 0 concrete with punched windows, 1 a glass
+// curtain wall, 2 brick, 3 panels with ribbon windows, 4 stone, 5 plastered flats with balconies,
+// 6 old-town plaster with tall shuttered windows.
+// What each district builds with, by how tall the building is, and the colours of its walls: a
+// district is known by its materials as much as by its heights.
+const LOOK = {
+  downtown: { tall: [1, 1, 1, 3, 4], mid: [1, 3, 4, 4, 0], low: [4, 0, 3, 1] },
+  midtown: { tall: [1, 3, 4, 0], mid: [2, 2, 0, 3, 4, 5], low: [2, 2, 0, 5] },
+  residential: { tall: [5, 0, 3], mid: [5, 5, 0, 2], low: [5, 5, 0, 2] },
+  suburb: { tall: [5, 0], mid: [5, 0, 2], low: [5, 0, 2] },
+  oldtown: { tall: [6, 2], mid: [6, 6, 2], low: [6, 6, 6, 2] },
+};
+const WALLS = [
+  [[0.36, 0.35, 0.33], [0.27, 0.27, 0.28], [0.42, 0.39, 0.33], [0.3, 0.32, 0.34], [0.22, 0.21, 0.2]],                                          // concrete
+  [[0.02, 0.045, 0.085], [0.02, 0.06, 0.06], [0.035, 0.035, 0.04], [0.07, 0.05, 0.03], [0.025, 0.05, 0.04], [0.04, 0.05, 0.075]],              // glass
+  [[0.25, 0.105, 0.075], [0.16, 0.09, 0.07], [0.36, 0.29, 0.17], [0.23, 0.21, 0.19], [0.2, 0.065, 0.05], [0.3, 0.15, 0.09]],                   // brick
+  [[0.5, 0.5, 0.52], [0.05, 0.05, 0.06], [0.3, 0.34, 0.38], [0.5, 0.46, 0.38], [0.18, 0.2, 0.22]],                                             // panels
+  [[0.5, 0.47, 0.4], [0.46, 0.36, 0.26], [0.3, 0.3, 0.32], [0.45, 0.35, 0.31], [0.38, 0.38, 0.35]],                                            // stone
+  [[0.52, 0.47, 0.36], [0.55, 0.47, 0.27], [0.5, 0.33, 0.26], [0.33, 0.4, 0.3], [0.3, 0.37, 0.44], [0.56, 0.55, 0.52], [0.42, 0.38, 0.44]],    // flats
+  [[0.52, 0.38, 0.16], [0.45, 0.22, 0.13], [0.55, 0.5, 0.42], [0.5, 0.34, 0.3], [0.5, 0.42, 0.2], [0.3, 0.36, 0.26], [0.32, 0.42, 0.48]],      // old town
+];
+const REFL = [0.3, 0.85, 0.2, 0.65, 0.4, 0.25, 0.2];
+// a gabled roof over (x0, z0)-(x1, z1) from height H, its ridge along the longer side: a box turned
+// 45 degrees about the ridge and squashed (its lower half is inside the walls)
+function gable(K, x0, z0, x1, z1, H, col) {
+  const w = x1 - x0, d = z1 - z0, alongX = w >= d, L = alongX ? w : d, hd = (alongX ? d : w) / 2;
+  const eave = hd + 0.4, rh = Math.min(hd * 0.62, 5.5), sq = eave * Math.SQRT2, cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const m = TM.pitch(0, 0, 0, L + 0.5, sq, sq, Math.SQRT1_2, Math.SQRT1_2);
+  m[5] *= rh / eave; m[6] *= rh / eave;
+  // ridge along z: the same roof turned a quarter about y (x' = z, z' = -x)
+  const t = alongX ? m : [m[8], m[9], m[10], 0, m[4], m[5], m[6], 0, -m[0], -m[1], -m[2], 0];
+  t[3] = cx; t[7] = H; t[11] = cz;
+  K.basic(K.G.cube, t, col);
+  if (alongX) K.collider(x0, H, cz - hd * 0.5, x1, H + rh * 0.55, cz + hd * 0.5); else K.collider(cx - hd * 0.5, H, z0, cx + hd * 0.5, H + rh * 0.55, z1);
+  return rh;
+}
+const ROOF_TILES = [[0.3, 0.12, 0.07], [0.24, 0.1, 0.07], [0.1, 0.1, 0.12], [0.2, 0.12, 0.08], [0.33, 0.16, 0.09], [0.16, 0.13, 0.11], [0.08, 0.09, 0.11]];
+// opt: pal (the district: LOOK), style, wall [r,g,b], shop (0..1), roof (rooftop gear and signs),
+// tiers (false: one plain box), fh (floor height), snd (what it sounds like when hit)
 function building(K, x0, z0, x1, z1, H, sides, nl, H0, opt) {
   const { G, R, pick, rd, Rd, pickd, rng, Q, full } = K;
   const seed = Math.floor(rng() * 16000000);
-  const style = opt.style ?? (H > 90 ? pick([1, 1, 3, 4, 0]) : H > 35 ? pick([0, 1, 3, 4, 0, 2]) : pick([0, 2, 2, 0, 3]));
-  const WALL = [
-    () => { const g = R(0.25, 0.5); return [g, g * R(0.92, 1), g * R(0.82, 0.95)]; },
-    () => [R(0.02, 0.05), R(0.04, 0.07), R(0.06, 0.1)],
-    () => [R(0.3, 0.45), R(0.12, 0.2), R(0.07, 0.12)],
-    () => (rng() < 0.5 ? [0.55, 0.55, 0.56] : [0.06, 0.06, 0.07]),
-    () => [R(0.5, 0.65), R(0.48, 0.6), R(0.42, 0.52)],
-  ];
-  const wall = opt.wall || WALL[style]();
-  const refl = [0.3, 0.85, 0.2, 0.65, 0.4][style];
-  const fh = opt.fh || (style === 0 || style === 2 ? R(3.0, 3.4) : R(3.7, 4.2));
-  const cw = style === 2 ? R(2.3, 2.9) : style === 1 ? R(1.6, 2.8) : R(2.6, 4.2);
-  const wx = Math.min(1, (opt.wx ?? [0.55, 0.92, 0.45, 1.0, 0.62][style]) * R(0.9, 1.08));
+  const look = LOOK[opt.pal] || LOOK.midtown;
+  const style = opt.style ?? pick(H > 90 ? look.tall : H > 28 ? look.mid : look.low);
+  const tone = R(0.82, 1.16), base = opt.wall || pick(WALLS[style]);
+  const wall = opt.wall || [base[0] * tone * R(0.94, 1.06), base[1] * tone * R(0.96, 1.04), base[2] * tone * R(0.94, 1.06)];
+  const refl = REFL[style];
+  const fh = opt.fh || (style === 1 || style === 3 || style === 4 ? R(3.7, 4.2) : style === 6 ? R(3.2, 3.7) : R(2.9, 3.3));
+  const cw = style === 2 ? R(2.3, 2.9) : style === 1 ? R(1.6, 2.8) : style === 6 ? R(2.2, 2.7) : style === 5 ? R(3.0, 3.8) : R(2.6, 4.2);
+  const wx = Math.min(1, (opt.wx ?? [0.55, 0.92, 0.45, 1.0, 0.62, 0.6, 0.4][style]) * R(0.9, 1.08));
   const shop = opt.shop ?? clamp(nl * 0.9 + (H0 > 100 ? 0.3 : 0) + R(-0.2, 0.2), 0.05, 1);
   H = Math.max(fh * 2, Math.round(H / fh) * fh);
-  const tiers = [];
-  if (opt.tiers !== false && H > 70 && rng() < 0.75) {
+  const w = x1 - x0, d = z1 - z0, shape = rng(), tiers = [];
+  const snap = (y) => Math.max(fh * 2, Math.round(y / fh) * fh);
+  let court = null;
+  if (opt.tiers === false || opt.landmark) {
+    if (opt.landmark && H > 70) {
+      const fr = [0.45, 0.3, 0.25];
+      let yb = 0, f = [x0, z0, x1, z1];
+      for (let k = 0; k < fr.length; k++) {
+        const yt = k === fr.length - 1 ? H : snap(yb + H * fr[k] * R(0.85, 1.15));
+        tiers.push([...f, yb, yt]);
+        const sx = (f[2] - f[0]) * R(0.08, 0.14), sz = (f[3] - f[1]) * R(0.08, 0.14);
+        f = [f[0] + sx, f[1] + sz, f[2] - sx, f[3] - sz]; yb = yt;
+      }
+    } else tiers.push([x0, z0, x1, z1, 0, H]);
+  } else if (H > 70 && shape < 0.4) {
+    // setbacks: each part of the tower a little smaller than the one below
     const fr = H > 180 ? [0.45, 0.3, 0.25] : [0.6, 0.4];
     let yb = 0, f = [x0, z0, x1, z1];
     for (let k = 0; k < fr.length; k++) {
-      const yt = k === fr.length - 1 ? H : Math.round((yb + H * fr[k] * R(0.85, 1.15)) / fh) * fh;
+      const yt = k === fr.length - 1 ? H : snap(yb + H * fr[k] * R(0.85, 1.15));
       tiers.push([...f, yb, yt]);
       const sx = (f[2] - f[0]) * R(0.06, 0.16), sz = (f[3] - f[1]) * R(0.06, 0.16), ax = R(0.3, 1.7), az = R(0.3, 1.7);
       const n = [f[0] + sx * ax, f[1] + sz * az, f[2] - sx * (2 - ax), f[3] - sz * (2 - az)];
       if (n[2] - n[0] < 9 || n[3] - n[1] < 9) { tiers[tiers.length - 1][5] = H; break; }
       f = n; yb = yt;
     }
+  } else if (H > 48 && Math.min(w, d) > 24 && shape < 0.68) {
+    // a podium the size of the lot and a slimmer tower on it, towards one side
+    const ph = snap(fh * R(3, 6)), fx = R(0.5, 0.72), fz = R(0.5, 0.72), ox = pick([0, 0.5, 1]), oz = pick([0, 0.5, 1]);
+    const tx0 = x0 + (w - w * fx) * ox, tz0 = z0 + (d - d * fz) * oz;
+    tiers.push([x0, z0, x1, z1, 0, ph], [tx0, tz0, tx0 + w * fx, tz0 + d * fz, ph, H]);
+  } else if (H > 26 && H < 130 && Math.max(w, d) > 32 && Math.min(w, d) > 14 && shape < 0.84) {
+    // two slabs side by side, one lower, a gap between them
+    const gap = R(3, 6), f = R(0.42, 0.58), h2 = snap(H * R(0.5, 0.85));
+    if (w >= d) { const m = x0 + w * f; tiers.push([x0, z0, m - gap / 2, z1, 0, h2], [m + gap / 2, z0, x1, z1, 0, H]); }
+    else { const m = z0 + d * f; tiers.push([x0, z0, x1, m - gap / 2, 0, h2], [x0, m + gap / 2, x1, z1, 0, H]); }
+  } else if (H > 9 && H <= 45 && w > 19 && d > 19 && shape > 0.8) {
+    // an L round a courtyard: two wings, the corner left open
+    const dz = d * R(0.4, 0.55), dx = w * R(0.4, 0.55), fx = rng() < 0.5, fz = rng() < 0.5, h2 = snap(H * R(0.65, 1));
+    const bz = fz ? [z0 + dz, z1] : [z0, z1 - dz], bx = fx ? [x0, x0 + dx] : [x1 - dx, x1];
+    tiers.push(fz ? [x0, z0, x1, z0 + dz, 0, H] : [x0, z1 - dz, x1, z1, 0, H], [bx[0], bz[0], bx[1], bz[1], 0, h2]);
+    court = [fx ? (x0 + dx + x1) / 2 : (x0 + x1 - dx) / 2, (bz[0] + bz[1]) / 2];
   } else tiers.push([x0, z0, x1, z1, 0, H]);
   K.snd = opt.snd ?? (style === 1 || (style === 3 && wx > 0.8) ? 1 : 0);
-  tiers.forEach(([a, b, c, d, yb, yt], k) => {
-    K.push(G.cube, TM.box((a + c) / 2, (yb + yt) / 2, (b + d) / 2, c - a, yt - yb, d - b), [...wall, refl], [MAT.building, 0, seed, k === 0 ? shop : 0], [style, fh, cw, wx]);
-    K.collider(a, yb, b, c, yt, d);
+  tiers.forEach(([a, b, c, e, yb, yt]) => {
+    K.push(G.cube, TM.box((a + c) / 2, (yb + yt) / 2, (b + e) / 2, c - a, yt - yb, e - b), [...wall, refl], [MAT.building, 0, seed, yb === 0 ? shop : 0], [style, fh, cw, wx]);
+    K.collider(a, yb, b, c, yt, e);
   });
   K.snd = 0;
+  if (court && rd() < Q.trees) K.tree(court[0], court[1], Rd(0.9, 1.3));
+  // the tallest part is what the roof gear, the crown and the lights stand on
+  tiers.sort((p, q) => p[5] - q[5]);
+  // old-town houses, and low brick and plaster ones elsewhere, have tiled roofs
+  if (opt.roof !== false && tiers.length === 1 && H < (style === 6 ? 20 : 13) && Math.min(w, d) < 19 && rng() < (style === 6 ? 0.8 : style === 2 || style === 5 ? 0.25 : 0)) {
+    gable(K, x0, z0, x1, z1, H, pickd(ROOF_TILES));
+    if (full && rd() < 0.6) { const cx = Rd(x0 + 1.5, x1 - 1.5), cz = Rd(z0 + 1.5, z1 - 1.5); K.basic(G.cube, TM.box(cx, H + 2.2, cz, 0.9, 4.4, 0.9), [wall[0] * 0.6, wall[1] * 0.6, wall[2] * 0.6]); }
+    opt = { ...opt, roof: false };
+  }
   K.footRect(x0, z0, x1, z1);
   if (shop > 0.3) {
     const spill = (x, z) => K.splat(x, z, 0.5 * shop, 0.36 * shop, 0.22 * shop, 3.5);
@@ -158,6 +231,12 @@ function building(K, x0, z0, x1, z1, H, sides, nl, H0, opt) {
   if (opt.roof === false) return res;
   // rooftops: LED crowns, corner strips, spires, warning lights, water tanks, machinery, billboards
   const lm = !!opt.landmark;
+  // a plant room on top: a plain storey or two, smaller than the roof (the building reads taller)
+  if (!lm && H > 26 && tw > 12 && td > 12 && rng() < 0.55) {
+    const pw = tw * R(0.4, 0.7), pd = td * R(0.4, 0.7), ph = fh * R(0.9, 1.7), px = tcx + (tw - pw) * R(-0.3, 0.3), pz = tcz + (td - pd) * R(-0.3, 0.3);
+    K.push(G.cube, TM.box(px, top + ph / 2, pz, pw, ph, pd), [wall[0] * 0.7 + 0.02, wall[1] * 0.7 + 0.02, wall[2] * 0.7 + 0.02, 0.15], [MAT.building, 0, seed, 0], [style, fh, cw, 0]);
+    K.collider(px - pw / 2, top, pz - pd / 2, px + pw / 2, top + ph, pz + pd / 2);
+  }
   if ((H > 140 && rd() < 0.6) || lm) {
     const c = lm ? pickd([[0.9, 0.95, 1.0], [1.0, 0.8, 0.45], [0.45, 0.75, 1.0]]) : pickd(NEON.slice(0, 4).concat([[0.9, 0.95, 1.0]])), it = lm ? 6 : Rd(3, 6);
     // a landmark's top storeys glow: a lantern that can be seen from anywhere in town
@@ -237,7 +316,12 @@ function splitLots(K, x0, z0, x1, z1, maxLot, depth, sides, out, irregular = 0) 
 }
 const sidewalk = (K, x0, z0, x1, z1) => K.G.cube.push(TM.box((x0 + x1) / 2, 0.09, (z0 + z1) / 2, x1 - x0, 0.18, z1 - z0), [0, 0, 0, 0], [MAT.sidewalk, 0, 0, 0]);
 const nightlife = (x, z) => vnoise(x * 0.004 + 3.1, z * 0.004 - 1.7) * 0.8 + 0.5 * Math.exp(-((x - 150) ** 2 + (z + 380) ** 2) / 500 ** 2);
-const lampColor = (sb) => (sb.kind === 'industrial' || sb.kind === 'docks' ? MERCURY : sb.kind === 'midtown' && ih(sb.seed, 43) < 0.4 ? LED : LAMP);
+// every district is lit its own way (seen from above, the colour of its streets tells which it is):
+// cool white LEDs downtown, sodium orange in midtown and the residential streets, amber lanterns in
+// the old town, mercury green over industry and the docks, a soft warm white in the suburbs
+const AMBER = [1.0, 0.58, 0.26], SOFT = [1.0, 0.84, 0.66];
+const lampColor = (sb) => (sb.kind === 'industrial' || sb.kind === 'docks' ? MERCURY : sb.kind === 'downtown' ? LED : sb.kind === 'oldtown' ? AMBER : sb.kind === 'suburb' ? SOFT
+  : sb.kind === 'midtown' && ih(sb.seed, 43) < 0.4 ? LED : LAMP);
 
 // ---------- one block of a superblock, by district ----------
 // How much each kind of district wants a place, from smooth fields: near an edge between two kinds
@@ -379,12 +463,14 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
   const nl0 = old ? 0.55 + nlBase * 0.6 : H0 > 30 ? nlBase + (c > 0.42 ? 0.15 : 0) : 0.15 + nlBase * 0.35;
   const nl = quiet ? Math.min(nl0, 0.2) : calm ? Math.min(nl0, 0.4) : nl0;
   const maxLot = old ? 17 : H0 > 170 ? 70 : H0 > 70 ? 40 : 28 - 6 * sub, capH = towerCap(blk.cx, blk.cz);
-  const styleOpt = old ? { style: rd() < 0.7 ? 2 : 0, tiers: false } : {};
+  // the district's own materials; where the core thins out or the houses begin, its neighbour's
+  const pal = old ? 'oldtown' : c > 0.42 ? 'downtown' : c > 0.12 ? 'midtown' : quiet ? 'suburb' : sb.kind === 'oldtown' || sb.kind === 'industrial' ? 'residential' : sb.kind;
+  const styleOpt = { pal };
   // the landmark tower at the peak of a centre: alone in its block, with a little plaza round it
   if (blk.landmark) {
     const s = Math.min(blk.landmark.h > 300 ? 50 : 38, (bx.x1 - bx.x0) * 0.72, (bx.z1 - bx.z0) * 0.72), cx = (bx.x0 + bx.x1) / 2, cz = (bx.z0 + bx.z1) / 2;
     const lot = { x0: cx - s / 2, z0: cz - s / 2, x1: cx + s / 2, z1: cz + s / 2 };
-    const bld = K.building(lot.x0, lot.z0, lot.x1, lot.z1, blk.landmark.h, 15, Math.max(nl, 0.6), blk.landmark.h, { style: K.pick([1, 3, 4]), landmark: true, shop: 0.8 });
+    const bld = K.building(lot.x0, lot.z0, lot.x1, lot.z1, blk.landmark.h, 15, Math.max(nl, 0.6), blk.landmark.h, { style: K.pick([1, 3, 4]), landmark: true, shop: 0.8, pal: 'downtown' });
     placed.push(lot);
     for (const [x, z] of [[lot.x0 - 6, lot.z0 - 6], [lot.x1 + 6, lot.z0 - 6], [lot.x0 - 6, lot.z1 + 6], [lot.x1 + 6, lot.z1 + 6]]) {
       K.sprite(x, 0.6, z, [1, 0.92, 0.8], 5, 0.8);
@@ -595,8 +681,9 @@ function industrialLots(K, lp, bx, placed) {
       const n = w > 40 && d > 40 ? 4 : 1, rad = Math.min(w, d) / (n > 1 ? 4.4 : 2.4);
       for (let k = 0; k < n; k++) {
         const x = n > 1 ? cx + (k % 2 ? 1 : -1) * w / 4 : cx, z = n > 1 ? cz + (k < 2 ? 1 : -1) * d / 4 : cz, h = R(10, 18);
-        K.basic(G.cyl, TM.box(x, h / 2, z, rad * 2, h, rad * 2), [0.62, 0.62, 0.6]);
-        K.basic(G.cone, TM.box(x, h + 1, z, rad * 2, 2, rad * 2), [0.55, 0.55, 0.53]);
+        const tc = pickd([[0.34, 0.34, 0.33], [0.26, 0.3, 0.27], [0.3, 0.2, 0.15], [0.4, 0.4, 0.42], [0.2, 0.22, 0.25]]);
+        K.basic(G.cyl, TM.box(x, h / 2, z, rad * 2, h, rad * 2), tc);
+        K.basic(G.cone, TM.box(x, h + 1, z, rad * 2, 2, rad * 2), [tc[0] * 0.85, tc[1] * 0.85, tc[2] * 0.85]);
         K.snd = 2; K.collider(x - rad * 0.8, 0, z - rad * 0.8, x + rad * 0.8, h + 1.5, z + rad * 0.8); K.snd = 0;
         K.footRect(x - rad, z - rad, x + rad, z + rad);
         K.sprite(x, h + 2.2, z, [1, 0.08, 0.04], 4, 0.6, ANIM.blink, 0, rd());
@@ -645,7 +732,7 @@ function houseLots(K, sb, blk, lp, bx, placed) {
     const w = lot.x1 - lot.x0, d = lot.z1 - lot.z0;
     if (w < 9 || d < 9) continue;
     if (shops && onAvenue(K, sb, blk, lot)) {
-      K.building(lot.x0 + 0.8, lot.z0 + 0.8, lot.x1 - 0.8, lot.z1 - 0.8, R(6.5, 10), lot.sides, 0.15, 10, { style: rd() < 0.5 ? 0 : 2, tiers: false, shop: R(0.22, 0.4) });
+      K.building(lot.x0 + 0.8, lot.z0 + 0.8, lot.x1 - 0.8, lot.z1 - 0.8, R(6.5, 10), lot.sides, 0.15, 10, { pal: 'suburb', tiers: false, shop: R(0.22, 0.4) });
       placed.push(lot);
       continue;
     }
@@ -834,7 +921,7 @@ function streetPiece(K, ax, az, bx, bz, w, lanesN, extra = 0) {
 }
 // a straight street: its pieces (each owned by the piece of city its middle is in), lamps both
 // sides on its own lattice, cars parked along the kerbs, clear of every junction
-function straightStreet(K, road, own, lc, step, seed) {
+function straightStreet(K, road, own, lc, step, seed, festoon = false) {
   const dx = road.bx - road.ax, dz = road.bz - road.az, len = Math.hypot(dx, dz), ux = dx / len, uz = dz / len, nx = -uz, nz = ux;
   const lanesN = road.kind === 'boulevard' ? 2 : 1, at = (s, o) => [road.ax + ux * s + nx * o, road.az + uz * s + nz * o];
   // where it meets an avenue or another street at an angle, plain asphalt runs on into the corner
@@ -864,6 +951,17 @@ function straightStreet(K, road, own, lc, step, seed) {
   }
   if (!K.full) return;
   K.reseed(seed);
+  // the old town hangs strings of lights across its streets, wall to wall
+  if (festoon) for (let s = 14 + K.Rd(0, 16); s < len - 12; s += 26 + K.Rd(0, 24)) {
+    const [mx, mz] = at(s, 0), hw = road.w / 2 + 3.3, y0 = 7.4, sag = 1.1;
+    if (clear(s, 7) || !own(mx, mz)) continue;
+    const col = K.rd() < 0.7 ? [1, 0.8, 0.5] : K.pickd([[1, 0.45, 0.3], [0.5, 0.9, 1], [1, 0.9, 0.4], [0.6, 1, 0.6]]);
+    const [ax, az] = at(s, -hw), [bx, bz] = at(s, hw);
+    K.basic(K.G.cube, TM.seg(ax, y0, az, mx, y0 - sag, mz, 0.05), [0.02, 0.02, 0.02]);
+    K.basic(K.G.cube, TM.seg(mx, y0 - sag, mz, bx, y0, bz, 0.05), [0.02, 0.02, 0.02]);
+    for (let k = 1; k < 8; k++) { const u = k / 8, [x, z] = at(s, -hw + 2 * hw * u); K.sprite(x, y0 - sag * (1 - Math.abs(2 * u - 1)) - 0.12, z, col, 2.4, 0.24); }
+    K.splat(mx, mz, col[0] * 0.3, col[1] * 0.3, col[2] * 0.3, 4.5);
+  }
   const every = K.Q.carGap * 0.35 + 6, yaw = Math.atan2(-uz, ux);
   for (const sd of [-1, 1]) {
     for (let s = 9 + K.Rd(0, every); s < len - 9; s += every * K.Rd(0.5, 1.5) + 5.5) {
@@ -1345,7 +1443,7 @@ function genChunk(cx, cz, lod, Q) {
       continue;
     }
     const sstep = sb.kind === 'suburb' ? step * 2 : step;
-    L.roads.forEach((road, k) => straightStreet(K, road, own, lc, sstep, pcg((sb.seed ^ pcg(k * 7 + 3)) >>> 0)));
+    L.roads.forEach((road, k) => straightStreet(K, road, own, lc, sstep, pcg((sb.seed ^ pcg(k * 7 + 3)) >>> 0), sb.kind === 'oldtown'));
     for (const c of L.crossings) if (own(c.x, c.z)) crossing(K, c.x, c.z, c.wx, c.wz, c.yaw);
     for (const blk of L.blocks) {
       const bb = polyBox(blk.poly);

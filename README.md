@@ -24,6 +24,11 @@ with **WebGPU** (Chrome or Edge on desktop).
   town, crossed now and then by girder, arch, cable-stayed or suspension bridges; elsewhere the avenues end at a
   lookout on the bank. Ports keep the water free for ships: the avenues end at the port gate. Where an avenue
   ends, the traffic turns round.
+- Neighbourhoods laid out at different angles: old town and some residential districts have their street grid
+  turned against the avenues, with wedge-shaped corners that become small squares, gardens or car parks, and
+  now and then a diagonal boulevard cuts through. Each district has its own materials, roofs and street lighting.
+- Sound made from where you are: motors from an AudioWorklet (no clicks), hits that sound like glass, masonry,
+  metal or wood, a splash in the river, and an optional ambience with traffic, trains, water, wind and rain.
 - An elevated railway that runs in loops, as metro lines do: up one avenue, round a curve over the junction,
   along a cross avenue and back down another, with stations on every side. It crosses the rivers on its own
   bridges (a steel truss, or on top of the road bridge), and the trains never stop going round.

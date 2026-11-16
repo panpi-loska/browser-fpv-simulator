@@ -264,8 +264,11 @@ fn lightAt(w: vec3f) -> vec4f {
   if (!tileOK(w)) { return vec4f(0.0, 0.0, 0.0, 1.0); }
   return textureSampleLevel(lightTex, sampW, w.xz / SPAN, 0.0);
 }
+// the light that is everywhere: a little from all round, the city's glow from below and low down, and
+// the sky's own light on whatever faces up (so roofs, cars and lawns are not black after sunset)
 fn ambientL(n: vec3f, y: f32) -> vec3f {
-  return u.amb.rgb * (0.65 + 0.35 * n.y) + u.glow.rgb * (0.05 * (0.5 - 0.5 * n.y) + 0.05 * exp(-max(y, 0.0) / 120.0));
+  return u.amb.rgb * (0.65 + 0.35 * n.y) + u.glow.rgb * (0.05 * (0.5 - 0.5 * n.y) + 0.05 * exp(-max(y, 0.0) / 120.0))
+    + (u.skyTop.rgb * 0.5 + u.skyHor.rgb * 0.3) * max(n.y, 0.0) * 0.7;
 }
 fn sunL(n: vec3f) -> vec3f { return u.sunCol.rgb * max(dot(n, u.sunDir.xyz), 0.0); }
 fn streetL(w: vec3f, n: vec3f) -> vec3f {
@@ -356,16 +359,122 @@ fn instSize(I: Inst) -> vec3f {
   return vec3f(length(vec3f(I.m0.x, I.m1.x, I.m2.x)), length(vec3f(I.m0.y, I.m1.y, I.m2.y)), length(vec3f(I.m0.z, I.m1.z, I.m2.z)));
 }
 
+// distance to the nearest line of a set of parallel lines period apart
+fn lineDist(x: f32, period: f32) -> f32 { return abs(fract(x / period + 0.5) - 0.5) * period; }
+// A flat roof, seen mostly from above: its covering (tar, gravel, pale coating, red oxide, planted),
+// seams, a parapet, air handlers with their fans, skylights (some lit from below), a helipad on the
+// big roofs of tall towers. Lit by the sky.
+fn shadeRoof(I: Inst, w: vec3f, lp: vec3f, size: vec3f, seed: u32, wall: vec3f, light: vec3f, V: vec3f) -> vec3f {
+  let rx = lp.x * size.x; let rz = lp.z * size.z;
+  let edge = min(size.x * 0.5 - abs(rx), size.z * 0.5 - abs(rz));
+  if (edge < 0.45) { return (wall * 0.6 + 0.03) * light; }
+  let kind = rnd(seed ^ 0x51u);
+  var alb = vec3f(0.105, 0.103, 0.1);
+  if (kind < 0.28) { alb = vec3f(0.04, 0.04, 0.045); }
+  else if (kind < 0.52) { alb = vec3f(0.105, 0.103, 0.1); }
+  else if (kind < 0.7) { alb = vec3f(0.2, 0.2, 0.19); }
+  else if (kind < 0.84) { alb = vec3f(0.14, 0.07, 0.05); }
+  else if (kind < 0.93) { alb = vec3f(0.05, 0.09, 0.04) * (0.6 + 0.9 * vnoise(w.xz * 0.7)); }
+  else { alb = vec3f(0.07, 0.12, 0.11); }
+  alb *= 0.72 + 0.56 * vnoise(w.xz * 0.35 + vec2f(f32(seed & 255u)));
+  alb *= 1.0 - 0.3 * max(band(lineDist(rx, 3.2), 0.035, fwidth(rx)), band(lineDist(rz, 9.6), 0.035, fwidth(rz)));
+  alb *= mix(0.6, 1.0, smoothstep(0.45, 1.6, edge));   // the parapet's shadow
+  var em = vec3f(0.0);
+  let near = 1.0 - smoothstep(0.08, 0.35, max(fwidth(rx), fwidth(rz)) / 5.0);
+  if (edge > 2.2 && near > 0.0) {
+    let g = vec2f(rx, rz) / 5.0; let c = floor(g); let f = g - c - 0.5;
+    let h = ihash(i32(c.x), i32(c.y), seed ^ 0x77u); let r = rnd(h);
+    let q = abs(f);
+    if (r < 0.17) {            // an air handler: a pale box, its fan a dark disc
+      let hs = vec2f(0.2 + 0.2 * rnd(h ^ 1u), 0.18 + 0.16 * rnd(h ^ 2u));
+      if (q.x < hs.x && q.y < hs.y) {
+        var unit = vec3f(0.22, 0.22, 0.23) * (0.8 + 0.4 * rnd(h ^ 5u));
+        if (length(f) < min(hs.x, hs.y) * 0.72) { unit = vec3f(0.04); }
+        alb = mix(alb, unit, near);
+      } else if (q.x < hs.x + 0.06 && q.y < hs.y + 0.06) { alb *= mix(1.0, 0.5, near); }
+    } else if (r < 0.25) {     // a skylight
+      if (q.x < 0.3 && q.y < 0.17) {
+        alb = mix(alb, vec3f(0.03, 0.04, 0.05), near);
+        if (rnd(h ^ 3u) < u.skyTop.w * 1.1) { em = select(vec3f(1.0, 0.78, 0.5), vec3f(0.75, 0.88, 1.0), rnd(h ^ 4u) < 0.4) * 0.8 * near * (0.6 + 0.4 * step(0.02, abs(f.x) - 0.005)); }
+      }
+    }
+  }
+  if (size.x > 26.0 && size.z > 26.0 && w.y > 85.0 && rnd(seed ^ 0x99u) < 0.35) {   // a helipad
+    let d = length(vec2f(rx, rz)); let fd = fwidth(d);
+    var m = band(abs(d - 8.0), 0.3, fd);
+    let a = abs(vec2f(rx, rz));
+    m = max(m, select(0.0, 1.0, (a.x > 1.6 && a.x < 2.3 && a.y < 3.2) || (a.x <= 1.6 && a.y < 0.35)));
+    if (d < 8.3) { alb = mix(mix(vec3f(0.06, 0.07, 0.07), alb, 0.3), vec3f(0.55, 0.5, 0.2), m); }
+  }
+  let wet = u.p2.y;
+  return alb * light * (1.0 - 0.25 * wet) + em + skyBase(reflect(V, vec3f(0.0, 1.0, 0.0))) * (0.02 + 0.12 * wet);
+}
+// The ground floor of a building with shops: bays 6.5 m wide between piers. A lit shop shows its
+// inside through the glass (bright under the ceiling lights, the dark shapes of what it sells, a door);
+// a closed one its shutter. Over the window a sign: a light box with lettering, lettering in neon on
+// a dark fascia, or a striped awning; never one flat block of colour.
+fn shadeShop(I: Inst, w: vec3f, uC: f32, face: u32, seed: u32, wallC: vec3f, reflC: vec3f, fr: f32, light: vec3f) -> vec3f {
+  let sx = uC / 6.5; let sid = floor(sx); let sf = sx - sid;
+  let sh = ihash(i32(sid) + i32(face) * 977, -3, seed);
+  let on = rnd(sh) < I.p.w * 0.95;
+  let r1 = rnd(sh ^ 3u); let r2 = rnd(sh ^ 7u); let r3 = rnd(sh ^ 11u);
+  let fw = fwidth(uC);
+  var c = wallC * 0.75;
+  let y = w.y;
+  // the window, between the piers and over a low wall
+  if (sf > 0.07 && sf < 0.93 && y > 0.5 && y < 3.3) {
+    if (on) {
+      // warm in most, cold white in a few (a pharmacy, a 24 h store), now and then a tint
+      var lc = vec3f(1.0, 0.74, 0.46);
+      if (r2 < 0.22) { lc = vec3f(0.78, 0.9, 1.0); } else if (r2 > 0.9) { lc = hue(r1) * 0.5 + 0.5; }
+      let inX = (sf - 0.07) / 0.86;
+      var g = lc * (0.16 + 0.34 * r1) * (0.35 + 0.65 * smoothstep(0.5, 3.3, y));
+      // what stands inside: shelves along the back, shapes in the window
+      let col = floor(inX * (5.0 + floor(r3 * 4.0)));
+      let hgt = 0.9 + 1.5 * rnd(sh ^ (u32(col) * 31u + 17u));
+      g *= mix(0.25, 1.0, smoothstep(hgt - 0.15, hgt + 0.1, y));
+      // the door, and the frames
+      let dx = 0.25 + 0.5 * r3;
+      if (abs(inX - dx) < 0.085 && y < 2.5) { g = lc * 0.3 * smoothstep(0.5, 2.4, y); }
+      g *= 1.0 - 0.75 * max(band(abs(abs(inX - dx) - 0.09), 0.012, fw / 5.6), band(lineDist(inX, 0.3334), 0.008, fw / 5.6) * step(2.55, y));
+      c = g * (1.0 - fr * 0.5) + reflC * 0.6;
+    } else if (r2 < 0.6) {   // shut: a roller shutter
+      c = vec3f(0.11, 0.115, 0.12) * (0.65 + 0.35 * step(0.5, fract(y * 7.0))) * light + reflC * 0.05;
+    } else { c = vec3f(0.006) + reflC * 0.7; }   // or dark glass
+  }
+  // the sign over it
+  let sy = (y - 3.6) / 0.85;
+  if (sy > 0.0 && sy < 1.0 && sf > 0.09 && sf < 0.91) {
+    let kind = rnd(sh ^ 0x77u);
+    let want = I.p.w * I.p.w * 1.7;
+    let tx = (sf - 0.09) / 0.82;
+    // lettering: blocks in a row, some missing, in the middle part of the fascia
+    let n = 5.0 + floor(rnd(sh ^ 0x21u) * 6.0); let lw = 0.36 + 0.4 * rnd(sh ^ 0x22u);
+    let lt = (tx - 0.5) / lw + 0.5; let li = floor(lt * n); let lf2 = fract(lt * n);
+    let glyph = select(0.0, 1.0, lt > 0.0 && lt < 1.0 && sy > 0.24 && sy < 0.76 && lf2 > 0.14 && lf2 < 0.86
+      && rnd(sh ^ (u32(li) * 97u + 5u)) < 0.86 && (rnd(sh ^ (u32(li) * 53u + u32(floor(sy * 4.0)) * 7u)) < 0.72));
+    let sc = hue(rnd(sh ^ 0x55u));
+    let flick = select(1.0, 0.2, rnd(sh ^ 5u) < 0.12 && rnd(sh ^ u32(u.cam.w * 9.0)) < 0.05);
+    let far = smoothstep(0.25, 0.9, fw * n / (5.3 * lw));   // too far to read: the sign's average
+    if (on && kind < want * 0.45) {            // a light box: pale, coloured letters
+      let box = mix(vec3f(1.0, 0.95, 0.85), sc, 0.12) * 0.9;
+      c = mix(mix(box, sc * 0.25, glyph), mix(box, sc * 0.25, 0.3), far) * flick;
+    } else if (on && kind < want) {            // neon on a dark fascia
+      c = wallC * 0.3 + mix(glyph, 0.3, far) * (sc * 1.9 + 0.25) * flick;
+    } else if (kind > 0.72) {                  // an awning: stripes, lit only by the street
+      let st = step(0.5, fract(tx * (4.0 + floor(r1 * 5.0))));
+      c = mix(sc * 0.22 + 0.03, vec3f(0.3, 0.29, 0.27), st * step(0.5, r3)) * light * (0.6 + 0.4 * sy);
+    }
+  }
+  return c;
+}
+
 fn shadeBuilding(I: Inst, w: vec3f, n: vec3f, lp: vec3f, V: vec3f) -> vec3f {
   let size = instSize(I);
   let seed = u32(I.p.z);
   let wall = I.col.rgb;
   let light = ambientL(n, w.y) + sunL(n) + streetL(w, n);
-  if (abs(n.y) > 0.5) {
-    let rim = max(abs(lp.x) * size.x - (size.x * 0.5 - 0.6), abs(lp.z) * size.z - (size.z * 0.5 - 0.6));
-    let r = mix(vec3f(0.05, 0.05, 0.055), wall * 0.6 + 0.03, step(0.0, rim)) * (0.75 + 0.5 * vnoise(w.xz * 0.4));
-    return r * light;
-  }
+  if (abs(n.y) > 0.5) { return shadeRoof(I, w, lp, size, seed, wall, light, V); }
   // which wall, in the building's own frame (it may be turned to its street)
   var uC: f32; var width: f32; var T: vec3f; var face: u32;
   if (abs(lp.x) >= abs(lp.z)) { uC = (lp.z + 0.5) * size.z; width = size.z; T = normalize(vec3f(I.m0.z, I.m1.z, I.m2.z)); face = select(1u, 0u, lp.x > 0.0); }
@@ -377,11 +486,18 @@ fn shadeBuilding(I: Inst, w: vec3f, n: vec3f, lp: vec3f, V: vec3f) -> vec3f {
   let cx = floor(gx); let cy = floor(gy);
   let fx = gx - cx; let fy = gy - cy;
   let fw = max(fwidth(gx), fwidth(gy));
-  let wx = I.q.w;
+  // what is this building's own: every one differs a little from the next of its kind
+  let v = vec4f(rnd(seed ^ 0x9e3779u), rnd(seed ^ 0x85ebcau), rnd(seed ^ 0xc2b2aeu), rnd(seed ^ 0x27d4ebu));
+  let masonry = style == 0u || style == 2u || style == 4u || style == 5u || style == 6u;
+  var wx = I.q.w;
   var wy = 0.55;
-  switch style { case 1u: { wy = 0.84; } case 2u: { wy = 0.5; } case 3u: { wy = 0.45; } case 4u: { wy = 0.78; } default: {} }
+  switch style { case 1u: { wy = 0.84; } case 2u: { wy = 0.5; } case 3u: { wy = 0.45; } case 4u: { wy = 0.78; } case 5u: { wy = 0.56; } case 6u: { wy = 0.64; } default: {} }
+  wy *= 0.86 + 0.26 * v.x;
+  let topY = I.m1.w + size.y * 0.5; let fromTop = topY - w.y;
 
   var wallC = wall * (0.85 + 0.3 * vnoise(vec2f(uC * 0.15 + f32(face) * 13.0, w.y * 0.08)));
+  // brick and old plaster weather: darker streaks down from the top, stains by the ground
+  if (style == 2u || style == 6u) { wallC *= 0.86 + 0.2 * vnoise(vec2f(uC * 0.9 + f32(face) * 7.0, w.y * 0.05)); }
   wallC *= mix(0.45, 1.0, smoothstep(0.0, 8.0, w.y)) * light;
   let cosv = clamp(-dot(V, n), 0.0, 1.0);
   let fr = fresnel(cosv);
@@ -389,49 +505,60 @@ fn shadeBuilding(I: Inst, w: vec3f, n: vec3f, lp: vec3f, V: vec3f) -> vec3f {
   let tint = select(vec3f(0.8, 0.85, 0.9), vec3f(0.55, 0.8, 0.85), style == 1u);
   let reflC = skyBase(reflect(V, n)) * tint * (0.08 + 0.92 * fr) * refl;
 
-  // the ground floor: shop windows with a glowing sign band above
-  if (I.p.w > 0.01 && w.y < 4.8) {
-    let sx = uC / 6.5; let sid = floor(sx); let sf = sx - sid;
-    let sh = ihash(i32(sid) + i32(face) * 977, -3, seed);
-    let on = rnd(sh) < I.p.w * 0.95;
-    let warm = vec3f(1.0, 0.7, 0.42);
-    let sc = select(warm, hue(rnd(sh ^ 99u)) * 0.6 + 0.4, rnd(sh ^ 7u) < 0.25) * (0.22 + 0.45 * rnd(sh ^ 3u));
-    var c = wallC * 0.7;
-    if (sf > 0.06 && sf < 0.94 && w.y > 0.35 && w.y < 3.5) {
-      // shelves and racks inside, brighter towards the ceiling lights
-      let shelf = 0.55 + 0.45 * step(0.25, fract(w.y * 1.6)) * step(0.12, fract(sx * 5.0 + rnd(sh ^ 11u)));
-      let g = select(vec3f(0.008), sc * shelf * (0.45 + 0.55 * smoothstep(0.3, 3.5, w.y)), on);
-      c = g * (1.0 - fr * 0.5) + reflC * 0.6;
-    }
-    // a coloured sign over the window: most shops downtown, few where there are few shops
-    if (on && rnd(sh ^ 0x77u) < I.p.w * I.p.w * 1.6 && w.y > 3.75 && w.y < 4.45 && sf > 0.1 && sf < 0.9) {
-      let flick = select(1.0, 0.15, rnd(sh ^ 5u) < 0.15 && rnd(sh ^ u32(u.cam.w * 9.0)) < 0.04);
-      c = (hue(rnd(sh ^ 0x55u)) * 2.2 + 0.15) * flick;
-    }
-    return c;
-  }
+  if (I.p.w > 0.01 && w.y < 4.8) { return shadeShop(I, w, uC, face, seed, wallC, reflC, fr, light); }
 
   let ws = windowState(seed, i32(cx), i32(cy), face, style);
   let aa = clamp(fw * 0.75, 0.002, 0.5);
   let ex = (1.0 - wx) * 0.5;
   var mx = 1.0;
   if (wx < 0.99) { mx = smoothstep(ex - aa, ex + aa, fx) * (1.0 - smoothstep(1.0 - ex - aa, 1.0 - ex + aa, fx)); }
-  let ey0 = (1.0 - wy) * 0.62; let ey1 = ey0 + wy;
-  let mask = mx * smoothstep(ey0 - aa, ey0 + aa, fy) * (1.0 - smoothstep(ey1 - aa, ey1 + aa, fy));
+  if (wx < 0.02) { mx = 0.0; }
+  var solid = wx < 0.02;
+  // windows in pairs: a mullion down the middle
+  if (masonry && v.w > 0.55) { mx *= smoothstep(0.03, 0.03 + aa, abs(fx - 0.5)); }
+  var ey0 = (1.0 - wy) * 0.62;
+  // flats: a balcony in front of most windows (the door reaches down to it)
+  let balcony = style == 5u && rnd(ihash(i32(cx) * 3 + i32(face), 91, seed)) < 0.35 + 0.5 * v.y && cy > 0.5;
+  if (balcony) { ey0 = 0.2; }
+  let ey1 = min(ey0 + wy, 0.95);
+  var mask = mx * smoothstep(ey0 - aa, ey0 + aa, fy) * (1.0 - smoothstep(ey1 - aa, ey1 + aa, fy));
+  // solid corners (a third of masonry buildings)
+  if (masonry && v.z < 0.4) { mask *= smoothstep(1.2, 1.2 + aa * cw, uC) * (1.0 - smoothstep(width - 1.2 - aa * cw, width - 1.2, uC)); }
+  // a cornice along the top of masonry; a dark screen round the top of glass and panels
+  if (masonry && size.y > 7.0) {
+    if (fromTop < 0.8) { mask = 0.0; solid = true; wallC *= 1.3; } else if (fromTop < 1.05) { mask = 0.0; solid = true; wallC *= 0.55; }
+  } else if (!masonry && fromTop < fh * (0.5 + v.y) && I.q.w > 0.01) { mask = 0.0; solid = true; wallC = wall * 0.35 * light * (0.7 + 0.3 * step(0.5, fract(uC * 2.0))); }
+  // towers: every so many floors a plant floor, louvred, no windows
+  if (!masonry && size.y > 60.0) {
+    let per = 11 + i32(v.y * 10.0);
+    if ((i32(cy) + i32(v.z * 7.0)) % per == 0) { mask = 0.0; solid = true; wallC = wall * 0.4 * light * (0.65 + 0.35 * step(0.5, fract(fy * 8.0))); }
+  }
 
   let hc = ihash(i32(cx) + 31, i32(cy) * 7 + i32(face), seed);
   var glass: vec3f;
-  if (rnd(hc ^ 0xabcdefu) < 0.3) {   // blinds drawn
+  if (rnd(hc ^ 0xabcdefu) < 0.3) {   // blinds drawn (old town: the shutters closed)
     let sl = 0.55 + 0.45 * smoothstep(0.3, 0.5, abs(fract(fy * 14.0) - 0.5));
-    glass = ws.rgb * ws.a * 0.5 * sl + vec3f(0.006);
+    glass = ws.rgb * ws.a * select(0.5, 0.06, style == 6u) * sl + vec3f(0.006);
   } else {
     glass = interior(vec2f(fx * cw, fy * fh), vec2f(cw, fh), V, T, n, hc, ws);
   }
   glass = glass * (1.0 - fr * refl) + reflC;
-  let nearC = mix(wallC, glass, mask);
-  let flatC = mix(wallC, ws.rgb * ws.a * 0.45 + reflC * 0.8 + vec3f(0.004), wx * wy);
+  var nearC = mix(wallC, glass, mask);
+  if (balcony && fy < 0.2 && mx > 0.0) {   // the balcony's front: a slab and a railing
+    let rail = vec3f(0.05, 0.05, 0.055) + wall * 0.35;
+    nearC = mix(nearC, rail * light * (0.55 + 0.45 * step(0.3, fract(fx * 9.0))) * mix(1.0, 0.4, step(fy, 0.035)), smoothstep(ex - 0.06 - aa, ex - 0.06 + aa, fx) * (1.0 - smoothstep(1.06 - ex - aa, 1.06 - ex + aa, fx)));
+  }
+  if (style == 6u) {   // shutters either side of the window, painted the house's colour of them
+    let sc = mix(mix(vec3f(0.06, 0.15, 0.09), vec3f(0.08, 0.13, 0.24), step(0.4, v.y)), vec3f(0.2, 0.1, 0.06), step(0.75, v.y));
+    let sw = 0.11;
+    let inY = smoothstep(ey0 - aa, ey0 + aa, fy) * (1.0 - smoothstep(ey1 - aa, ey1 + aa, fy));
+    let sm = max(smoothstep(ex - sw - aa, ex - sw + aa, fx) * (1.0 - smoothstep(ex - aa, ex + aa, fx)), smoothstep(1.0 - ex - aa, 1.0 - ex + aa, fx) * (1.0 - smoothstep(1.0 - ex + sw - aa, 1.0 - ex + sw + aa, fx)));
+    nearC = mix(nearC, sc * light * (0.7 + 0.3 * step(0.5, fract(fy * 16.0))) * 1.6, sm * inY);
+  }
+  let open = wx * wy * select(1.0, 0.0, solid);
+  let flatC = mix(wallC, ws.rgb * ws.a * 0.45 + reflC * 0.8 + vec3f(0.004), open);
   let avgL = select(vec3f(1.0, 0.65, 0.38), vec3f(0.9, 0.88, 0.85), style == 1u || style == 3u || style == 4u);
-  let farC = mix(wallC, avgL * u.skyTop.w * 0.75 * (0.55 + 0.9 * rnd(seed * 2654435761u)) + reflC * 0.8, wx * wy);
+  let farC = mix(wallC, avgL * u.skyTop.w * 0.75 * (0.55 + 0.9 * rnd(seed * 2654435761u)) + reflC * 0.8, open);
   var c = mix(nearC, flatC, smoothstep(0.3, 0.9, fw));
   c = mix(c, farC, smoothstep(1.2, 4.0, fw));
   return c;
@@ -787,7 +914,7 @@ struct BO { @builtin(position) pos: vec4f, @location(0) w: vec3f, @location(1) n
 
 // bloom (a chain of downsamples and tent-filtered upsamples) and the final tone mapping
 const POST_WGSL = /*wgsl*/`
-struct PU { texel: vec2f, intensity: f32, mode: f32, exposure: f32, time: f32, vignette: f32, pad: f32 };
+struct PU { texel: vec2f, intensity: f32, mode: f32, exposure: f32, time: f32, vignette: f32, rain: f32 };
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var smp: sampler;
 @group(0) @binding(2) var<uniform> pu: PU;
@@ -828,8 +955,30 @@ fn karis(c: vec3f) -> f32 { return 1.0 / (1.0 + max(c.r, max(c.g, c.b))); }
   return vec4f(c / 16.0 * pu.intensity, 1.0);
 }
 fn aces(x: vec3f) -> vec3f { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), vec3f(0.0), vec3f(1.0)); }
+// rain on the lens: drops that come and go, each bending the picture behind it (as a drop does, it
+// shows it upside down); xy the shift, z how much of the drop this is (its rim is darker)
+fn lensDrops(uv: vec2f) -> vec3f {
+  var o = vec3f(0.0);
+  if (pu.rain < 0.01) { return o; }
+  let asp = pu.texel.y / pu.texel.x;
+  for (var l = 0; l < 2; l++) {
+    let n = select(6.0, 11.0, l == 1);
+    let sc = vec2f(n, n / asp);
+    let g = uv * sc + f32(l) * 3.7; let cell = floor(g); let f = g - cell;
+    let h = fract(sin(dot(cell, vec2f(127.1, 311.7)) + f32(l) * 5.3) * 43758.5453);
+    let h2 = fract(h * 91.7); let h3 = fract(h * 517.3); let h4 = fract(h * 2971.1);
+    if (h > pu.rain * 0.34) { continue; }
+    let ph = fract(pu.time * (0.04 + 0.07 * h2) + h3);
+    let r = (0.1 + 0.17 * h4) * smoothstep(0.0, 0.04, ph) * (1.0 - smoothstep(0.7, 1.0, ph));
+    let d = f - (0.3 + 0.4 * vec2f(h2, h3)); let dl = length(d);
+    if (dl < r) { let k = 1.0 - (dl / r) * (dl / r); o = vec3f(-d * 1.7 * k / sc, k); }
+  }
+  return o;
+}
 @fragment fn fs_comp(i: FO) -> @location(0) vec4f {
-  var c = s(i.uv) + textureSampleLevel(bloomTex, smp, i.uv, 0.0).rgb * pu.intensity;
+  let drop = lensDrops(i.uv); let uv = i.uv + drop.xy;
+  var c = s(uv) + textureSampleLevel(bloomTex, smp, uv, 0.0).rgb * pu.intensity;
+  if (drop.z > 0.0) { c *= 0.75 + 0.35 * smoothstep(0.0, 0.5, drop.z); }
   c *= pu.exposure;
   c = aces(c);
   let q = i.uv - 0.5;
