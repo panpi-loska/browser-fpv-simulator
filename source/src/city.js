@@ -37,9 +37,14 @@ function riverSlot(k) {
   // river 0 is Halvard Bay's own, where it always was
   r = k === 0
     ? { k, zc: RIVER.z0, on: true, hw: RIVER.hw, a1: 36, f1: 0.0036, p1: 0.7, a2: 8, f2: 0.0095, p2: 0 }
-    : { k, zc: RIVER.z0 + k * RIVER.period + (ih(k, 11) - 0.5) * 1400, on: ih(k, 12) < 0.6, hw: 40 + 18 * ih(k, 19),
+    : { k, zc: RIVER.z0 + k * RIVER.period + (ih(k, 11) - 0.5) * 1400, on: ih(k, 12) < 0.6, hw: 32 + 63 * Math.pow(ih(k, 19), 1.4),
         a1: 26 + 24 * ih(k, 13), f1: 0.0026 + 0.0024 * ih(k, 14), p1: 6.2832 * ih(k, 15),
         a2: 5 + 9 * ih(k, 16), f2: 0.006 + 0.006 * ih(k, 17), p2: 6.2832 * ih(k, 18) };
+  // rivers run from 64 to 190 m wide; a wide one has less room to wind in its row
+  if (k !== 0) { const f = Math.min(1, (125 - r.hw) / (r.a1 + r.a2)); r.a1 *= f; r.a2 *= f; }
+  // the riverside row (drive to drive) fits its river: room for the bends, the ramps and a strip of
+  // bank, wider or narrower from one river to the next
+  r.row = k === 0 ? RIVER.row : Math.max(125, Math.min(200, r.hw + r.a1 + r.a2 + 58 + 45 * ih(k, 20)));
   if (riverCache.size > 64) riverCache.clear();
   riverCache.set(k, r);
   return r;
@@ -54,27 +59,72 @@ function bridgeH(x, z) {
   const d = Math.abs(z - riverZk(r, x)) - r.hw, k = clamp(1 - d / RIVER.ramp, 0, 1);
   return RIVER.h * k * k * (3 - 2 * k);
 }
+// What carries north-south avenue i over river r: Halvard Bay's suspension bridge at the origin;
+// elsewhere a tunnel now and then (where both banks have room for its portals: it keeps the traffic
+// flowing where there is no bridge), or a bridge of one kind or another, the big ones on wide rivers.
+const TUNNEL = { len: 54, depth: 7 };
+function crossingOf(i, r) {
+  if (i === 0 && r.k === 0) return 'suspension';
+  const x = aveX(i), rz = riverZk(r, x), u = ih2(i, r.k, 62), half = AVE.w / 2;
+  const room = Math.min(rz - r.hw - (r.zc - r.row + half), r.zc + r.row - half - (rz + r.hw));
+  const uu = (j) => ih2(j, r.k, 62);
+  // never two tunnels side by side; the big bridges (suspension, cable-stayed) are few and far apart,
+  // and arches do not come in a row either
+  if (u < 0.2 && room > TUNNEL.len + 12 && uu(i - 1) >= 0.2) return 'tunnel';
+  const alone = (lo, hi, n) => [-3, -2, -1, 1, 2, 3].slice(3 - n, 3 + n).every((d) => uu(i + d) <= lo || uu(i + d) > hi || u > uu(i + d));
+  if (u > 0.955 && r.hw > 55 && alone(0.955, 1, 3)) return 'suspension';
+  if (u > 0.84 && u <= 0.955 && r.hw > 45 && alone(0.84, 0.955, 2)) return 'cable';
+  const archBand = (v) => v > 0.68 && v <= 0.84;
+  if (archBand(u) && !archBand(uu(i - 1))) return 'arch';
+  return 'girder';
+}
 function inRiver(x, z) { const r = riverAt(z); return !!r && Math.abs(z - riverZk(r, x)) < r.hw + 0.5; }
 
 // ---------- the avenue grid ----------
-const aveX = (i) => (i === 0 ? AVE.x0 : AVE.x0 + i * AVE.period + (ih(i, 21) - 0.5) * 120);
+// North-south avenues come in runs of eight that span exactly eight periods; inside a run the gaps are
+// drawn between 300 and 650 m (as in a real city, some blocks long, some short). The first gap of the
+// run at the origin is fixed, so Halvard Bay's downtown keeps its avenue at x = 150 and its width.
+const AVE_RUN = 8, aveRuns = new Map();
+function aveRun(g) {
+  let o = aveRuns.get(g);
+  if (o) return o;
+  const raw = [];
+  for (let j = 0; j < AVE_RUN; j++) raw.push(g === 0 && j === 0 ? 480 : 300 + 350 * ih2(g, j, 21));
+  const f = (AVE_RUN * AVE.period) / raw.reduce((a, b) => a + b, 0);
+  o = [0];
+  for (let j = 0; j < AVE_RUN - 1; j++) o.push(o[j] + raw[j] * f);
+  if (aveRuns.size > 256) aveRuns.clear();
+  aveRuns.set(g, o);
+  return o;
+}
+const aveX = (i) => { const g = Math.floor(i / AVE_RUN); return AVE.x0 + g * AVE_RUN * AVE.period + aveRun(g)[i - g * AVE_RUN]; };
 // the north-south avenues between x0 and x1
 function aveXs(x0, x1) {
   const out = [];
-  for (let i = Math.floor((x0 - AVE.x0) / AVE.period) - 1; i <= Math.ceil((x1 - AVE.x0) / AVE.period) + 1; i++) {
+  for (let i = Math.floor((x0 - AVE.x0) / AVE.period) - 3; i <= Math.ceil((x1 - AVE.x0) / AVE.period) + 3; i++) {
     const x = aveX(i);
     if (x >= x0 && x <= x1) out.push({ i, x });
   }
   return out;
 }
 // the east-west avenues from river slot k to the next: the two riverside drives if there is a
-// river, then evenly spread lines with a little jitter
+// river, then lines between with gaps drawn from 300 to 650 m and scaled to fit
+const zLineCache = new Map();
 function zLinesOf(k) {
-  const r = riverSlot(k), n = riverSlot(k + 1), out = [];
-  if (r.on) { out.push({ z: r.zc - RIVER.row, k, m: -1, kind: 'n' }); out.push({ z: r.zc + RIVER.row, k, m: 0, kind: 's' }); }
+  let out = zLineCache.get(k);
+  if (out) return out;
+  const r = riverSlot(k), n = riverSlot(k + 1);
+  out = [];
+  if (r.on) { out.push({ z: r.zc - r.row, k, m: -1, kind: 'n' }); out.push({ z: r.zc + r.row, k, m: 0, kind: 's' }); }
   else out.push({ z: r.zc, k, m: 0, kind: '' });
-  const a = r.zc + (r.on ? RIVER.row : 0), b = n.zc - (n.on ? RIVER.row : 0), g = b - a, cnt = Math.max(1, Math.round(g / AVE.period));
-  for (let m = 1; m < cnt; m++) out.push({ z: a + (g * m) / cnt + (ih2(k, m, 22) - 0.5) * 120, k, m, kind: '' });
+  const a = r.zc + (r.on ? r.row : 0), b = n.zc - (n.on ? n.row : 0), g = b - a, cnt = Math.max(1, Math.round(g / AVE.period));
+  const raw = [];
+  for (let m = 0; m < cnt; m++) raw.push(300 + 350 * ih2(k, m, 22));
+  const f = g / raw.reduce((s, v) => s + v, 0);
+  let z = a;
+  for (let m = 1; m < cnt; m++) { z += raw[m - 1] * f; out.push({ z, k, m, kind: '' }); }
+  if (zLineCache.size > 64) zLineCache.clear();
+  zLineCache.set(k, out);
   return out;
 }
 function aveZs(z0, z1) {
@@ -260,11 +310,11 @@ function findSpecial(sp, x0, z0) {
   return null;
 }
 function launchSpots() {
-  const r0 = riverSlot(0), sx = aveX(0), rz = (x) => riverZk(r0, x);
+  const r0 = riverSlot(0), sx = aveX(0), rz = (x) => riverZk(r0, x), wx = (aveX(0) + aveX(1)) / 2;   // the Ferris wheel's x
   const spots = [
     { name: 'Downtown avenue', pos: [sx + AVE.w / 2 + 1.8, 2.2, -120], at: [sx, 40, -700] },
     { name: 'Skyline across the river', pos: [190, 22, rz(190) + RIVER.hw + 30], at: [140, 110, -420] },
-    { name: 'Ferris wheel', pos: [505, 26, rz(430) - 30], at: [430, 36, rz(430) - 125], mark: 'wheel' },
+    { name: 'Ferris wheel', pos: [wx + 75, 26, rz(wx) - 30], at: [wx, 36, rz(wx) - 125], mark: 'wheel' },
     { name: 'Above downtown', pos: [400, 420, -150], at: [150, 60, -420] },
     { name: 'Tower crane', pos: [430, 80, -430], at: [150, 60, -380], mark: 'crane' },
     { name: 'Suspension bridge', pos: [sx + 3.5, ROADY + RIVER.h + 2.2, rz(sx) + 22], at: [sx, 30, rz(sx) - 160] },

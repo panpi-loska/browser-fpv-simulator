@@ -43,6 +43,8 @@ const RIVER_P = ${f(RIVER.period)};
 const RIVER_HW = ${f(RIVER.hw)};
 const RAMP = ${f(RIVER.ramp)};
 const BRIDGE_H = ${f(RIVER.h)};
+const TUN_LEN = ${f(TUNNEL.len)};
+const TUN_D = ${f(TUNNEL.depth)};
 const ROADY = ${f(ROADY)};
 const TRAIN_Y = ${f(TRAIN_Y)};
 const BLIMP_Y = ${f(BLIMP_Y)};
@@ -82,9 +84,10 @@ fn riverSlot(k: i32) -> River {
   if (k == 0) { r.on = true; r.zc = RIVER_Z0; r.hw = RIVER_HW; r.a1 = 36.0; r.f1 = 0.0036; r.p1 = 0.7; r.a2 = 8.0; r.f2 = 0.0095; r.p2 = 0.0; return r; }
   r.zc = RIVER_Z0 + f32(k) * RIVER_P + (ihf(k, 11u) - 0.5) * 1400.0;
   r.on = ihf(k, 12u) < 0.6;
-  r.hw = 40.0 + 18.0 * ihf(k, 19u);
+  r.hw = 32.0 + 63.0 * pow(ihf(k, 19u), 1.4);
   r.a1 = 26.0 + 24.0 * ihf(k, 13u); r.f1 = 0.0026 + 0.0024 * ihf(k, 14u); r.p1 = 6.2832 * ihf(k, 15u);
   r.a2 = 5.0 + 9.0 * ihf(k, 16u); r.f2 = 0.006 + 0.006 * ihf(k, 17u); r.p2 = 6.2832 * ihf(k, 18u);
+  let f = min(1.0, (125.0 - r.hw) / (r.a1 + r.a2)); r.a1 = r.a1 * f; r.a2 = r.a2 * f;
   return r;
 }
 // how far (x, z) is from the nearest river's bank (negative: in the water)
@@ -97,6 +100,11 @@ fn bridgeH(x: f32, z: f32) -> f32 {
   let d = riverDist(x, z); let k = clamp(1.0 - d / RAMP, 0.0, 1.0);
   return BRIDGE_H * k * k * (3.0 - 2.0 * k);
 }
+// in a tunnel the road dips out of sight a little way inside the portal (from TUN_LEN off the bank)
+fn tunnelY(x: f32, z: f32) -> f32 {
+  let k = clamp((TUN_LEN - 10.0 - riverDist(x, z)) / 22.0, 0.0, 1.0);
+  return -TUN_D * k * k * (3.0 - 2.0 * k);
+}
 
 // ---------- animation: everything that moves is moved here, on the GPU ----------
 struct Pose { pos: vec3f, yaw: f32, pitch: f32, on: bool, k: u32 };
@@ -104,10 +112,13 @@ fn carPose(q: vec4f, slot: f32, t: f32) -> Pose {
   // q: the road's line (x for north-south, z for east-west), this piece's stretch [q.y, q.z] (swapped
   // for north-south), the lane's speed (negative: the other way). The lane is a conveyor of slots
   // CAR_STEP apart; slot k is at k * CAR_STEP + phase + speed * t, the same in every piece.
+  // A lane through a tunnel has its speed offset by 1000 (the same speed: the conveyor stays seamless).
   let ns = q.y > q.z;
+  let tun = abs(q.w) > 500.0;
+  let sp = select(q.w, q.w - sign(q.w) * 1000.0, tun);
   let lo = min(q.y, q.z); let hi = max(q.y, q.z);
   let lid = pcg(bitcast<u32>(i32(round(q.x * 4.0))) ^ select(0x9e3779b9u, 0x7f4a7c15u, q.w > 0.0));
-  let base = rnd(lid) * CAR_STEP + q.w * t;
+  let base = rnd(lid) * CAR_STEP + sp * t;
   let k0 = ceil((lo - base) / CAR_STEP);
   let s = base + (k0 + slot) * CAR_STEP;
   var P: Pose;
@@ -118,9 +129,16 @@ fn carPose(q: vec4f, slot: f32, t: f32) -> Pose {
     P.pos = vec3f(s, ROADY, q.x); P.yaw = select(PI, 0.0, fw); P.pitch = 0.0;
   } else {
     let d = select(-0.5, 0.5, fw);
-    P.pos = vec3f(q.x, ROADY + bridgeH(q.x, s), s);
     P.yaw = select(PI * 0.5, -PI * 0.5, fw);
-    P.pitch = atan(bridgeH(q.x, s + d) - bridgeH(q.x, s - d));
+    if (tun) {
+      let y = tunnelY(q.x, s);
+      P.pos = vec3f(q.x, ROADY + y, s);
+      P.pitch = atan(tunnelY(q.x, s + d) - tunnelY(q.x, s - d));
+      P.on = P.on && y > -2.5;   // out of sight in the dark of the tunnel
+    } else {
+      P.pos = vec3f(q.x, ROADY + bridgeH(q.x, s), s);
+      P.pitch = atan(bridgeH(q.x, s + d) - bridgeH(q.x, s - d));
+    }
   }
   return P;
 }

@@ -733,9 +733,9 @@ const CARS = [[0.5, 0.05, 0.04], [0.06, 0.07, 0.09], [0.6, 0.6, 0.62], [0.12, 0.
 // global number, so a car leaving one piece is already in the next. Nothing loops or pops.
 // axis 0 runs along x at z = coord, axis 1 along z at x = coord; dir +1 / -1
 const CAR_STEP = 12;
-function lane(K, axis, coord, dir, lo, hi) {
-  const { G } = K, speed = 9 + 7 * ih(Math.round(coord * 4), dir > 0 ? 81 : 82);
-  const q = axis === 0 ? [coord, lo, hi, dir * speed] : [coord, hi, lo, dir * speed];
+function lane(K, axis, coord, dir, lo, hi, tun) {
+  const { G } = K, speed = 9 + 7 * ih(Math.round(coord * 4), dir > 0 ? 81 : 82), v = dir * (speed + (tun ? 1000 : 0));
+  const q = axis === 0 ? [coord, lo, hi, v] : [coord, hi, lo, v];
   for (let i = 0, n = Math.ceil((hi - lo) / CAR_STEP) + 1; i < n; i++) {
     // body (p.z = 1: coloured by the shader), cabin, headlights, tail lights
     G.cube.push(TM.box(0, 0.72, 0, 4.4, 0.78, 1.86), [0.3, 0.3, 0.3, 0], [MAT.basic, ANIM.car, 1, i], q);
@@ -744,11 +744,12 @@ function lane(K, axis, coord, dir, lo, hi) {
   }
 }
 // both directions of an avenue over [lo, hi); right-hand traffic: driving +x keeps to +z, driving +z keeps to -x
-function lanes(K, axis, coord, lo, hi) {
+// (tun: the stretch dives through a tunnel, see carPose)
+function lanes(K, axis, coord, lo, hi, tun = false) {
   if (!K.full || hi - lo < 1) return;
   for (const o of [2.2, 5.8]) {
     if (axis === 0) { lane(K, 0, coord + o, 1, lo, hi); lane(K, 0, coord - o, -1, lo, hi); }
-    else { lane(K, 1, coord - o, 1, lo, hi); lane(K, 1, coord + o, -1, lo, hi); }
+    else { lane(K, 1, coord - o, 1, lo, hi, tun); lane(K, 1, coord + o, -1, lo, hi, tun); }
   }
 }
 // ---------- the streets inside a superblock (layout.js), in any direction ----------
@@ -837,7 +838,10 @@ function median(K, axis, coord, lo, hi, own, lc, step) {
 }
 
 // ---------- bridges and the elevated train ----------
-function bridge(K, x, r, w, grand, own) {
+// type: 'girder' (piers every 30 m), 'arch' (a steel arch over the whole span), 'cable' (cable-stayed
+// from one pylon), 'suspension' (two towers, main cables)
+function bridge(K, x, r, w, type, own) {
+  const grand = type === 'suspension';
   const { G } = K, W = w + 2.4, rz = riverZk(r, x), zA = rz - r.hw - RIVER.ramp, zB = rz + r.hw + RIVER.ramp;
   const n = Math.ceil((zB - zA) / 5);
   for (let k = 0; k < n; k++) {
@@ -853,18 +857,21 @@ function bridge(K, x, r, w, grand, own) {
       for (const s of [-1, 1]) K.collider(x + s * (W / 2 - 0.15) - 0.15, yLo, z0, x + s * (W / 2 - 0.15) + 0.15, yHi + 1.0, z1);
     }
   }
-  for (let z = rz - r.hw + 14; z < rz + r.hw - 10; z += grand ? 200 : 30) {
+  for (let z = rz - r.hw + 14; z < rz + r.hw - 10 && (type === 'girder' || grand); z += grand ? 200 : 30) {
     if (!own(x, z)) continue;
     K.basic(G.cyl, TM.box(x, (ROADY + RIVER.h - 1.2 - 3) / 2, z, 3.2, ROADY + RIVER.h - 1.2 + 3, 5), [0.1, 0.1, 0.1]);
     K.collider(x - 1.4, -3, z - 2.3, x + 1.4, ROADY + RIVER.h - 1.2, z + 2.3);
   }
+  const lampC = grand ? [0.75, 0.85, 1.0] : type === 'cable' ? LED : LAMP;
   for (let z = zA + 20; z < zB - 10; z += 26)
     for (const s of [-1, 1]) {
       const lxp = x + s * (W / 2 - 0.2), y = ROADY + bridgeH(x, z);
       if (!own(lxp, z)) continue;
-      if (K.full) { K.basic(G.cyl, TM.box(lxp, y + 2.6, z, 0.16, 5.2, 0.16), [0.08, 0.08, 0.09]); K.emissive(G.sphere, TM.box(lxp - s * 0.2, y + 5.1, z, 0.5, 0.5, 0.5), grand ? [0.75, 0.85, 1.0] : LAMP, 2); }
-      K.sprite(lxp - s * 0.4, y + 5.1, z, grand ? [0.75, 0.85, 1.0] : LAMP, 4, 0.6);
+      if (K.full) { K.basic(G.cyl, TM.box(lxp, y + 2.6, z, 0.16, 5.2, 0.16), [0.08, 0.08, 0.09]); K.emissive(G.sphere, TM.box(lxp - s * 0.2, y + 5.1, z, 0.5, 0.5, 0.5), lampC, 2); }
+      K.sprite(lxp - s * 0.4, y + 5.1, z, lampC, 4, 0.6);
     }
+  if (type === 'arch' && own(x, rz)) archSpan(K, x, r, W);
+  if (type === 'cable' && own(x, rz)) cableStayed(K, x, r, W);
   if (!grand || !own(x, rz)) return;
   // the suspension bridge: two towers, main cables strung with lights, suspenders down to the deck
   const deckY = ROADY + RIVER.h, top = 58, zt = [rz - r.hw + 10, rz + r.hw - 10], legX = [x - W / 2 - 1.3, x + W / 2 + 1.3];
@@ -885,6 +892,75 @@ function bridge(K, x, r, w, grand, own) {
       K.sprite(a[0], a[1] + 0.5, a[2], [0.8, 0.88, 1.0], 3.2, 0.45);
       if (a[2] > zt[0] + 1 && a[2] < zt[1] - 1) K.basic(G.cube, TM.seg(a[0], deckY + 0.8, a[2], a[0], a[1], a[2], 0.12), [0.3, 0.3, 0.33]);
     }
+  }
+}
+// a steel arch over the river from bank to bank on each side of the deck, hangers down to it
+function archSpan(K, x, r, W) {
+  const { G } = K, rz = riverZk(r, x), deckY = ROADY + RIVER.h, z0 = rz - r.hw + 1, z1 = rz + r.hw - 1, half = (z1 - z0) / 2;
+  const rise = Math.min(34, 0.26 * (z1 - z0) + 6), col = [[0.5, 0.14, 0.1], [0.62, 0.62, 0.6], [0.16, 0.3, 0.42]][Math.floor(ih2(Math.round(x), r.k, 63) * 3)];
+  const y = (z) => deckY - 1 + (rise + 1) * (1 - ((z - rz) / half) ** 2), n = 24;
+  for (const s of [-1, 1]) {
+    const ax = x + s * (W / 2 + 0.7);
+    for (let k = 0; k < n; k++) {
+      const za = z0 + (2 * half * k) / n, zb = z0 + (2 * half * (k + 1)) / n;
+      K.basic(G.cube, TM.seg(ax, y(za), za, ax, y(zb), zb, 1.2), col);
+      K.collider(ax - 0.6, Math.min(y(za), y(zb)) - 0.6, za, ax + 0.6, Math.max(y(za), y(zb)) + 0.6, zb);
+      if (k % 2 === 0) K.sprite(ax, y(za) + 0.9, za, [1, 0.9, 0.75], 3.5, 0.5);
+      // hangers down to the deck
+      if (k > 0 && y(za) > deckY + 2.5) K.basic(G.cube, TM.seg(ax, deckY + 0.6, za, ax, y(za), za, 0.18), col);
+    }
+  }
+  // bracing between the two arches near the crown
+  for (let z = rz - half * 0.5; z <= rz + half * 0.5; z += half * 0.25) {
+    if (y(z) < deckY + 7.5) continue;
+    K.basic(G.cube, TM.box(x, y(z) - 0.3, z, W + 1.4, 0.7, 0.7), col);
+    K.collider(x - W / 2 - 0.7, y(z) - 0.65, z - 0.35, x + W / 2 + 0.7, y(z) + 0.05, z + 0.35);
+  }
+}
+// a cable-stayed bridge: one pylon (two legs joined at the top) in mid-river, fans of stays to the deck
+function cableStayed(K, x, r, W) {
+  const { G } = K, rz = riverZk(r, x), deckY = ROADY + RIVER.h, H = 46 + Math.min(30, r.hw * 0.35), legX = [x - W / 2 - 1.2, x + W / 2 + 1.2];
+  for (const lx of legX) {
+    K.basic(G.cube, TM.seg(lx, -2, rz, (lx + x) / 2, H, rz, 2.4), [0.62, 0.62, 0.6]);
+    K.collider(Math.min(lx, x) - 1.2, -2, rz - 1.4, Math.max(lx, x) + 1.2, H, rz + 1.4);
+  }
+  K.basic(G.cube, TM.box(x, H + 4, rz, 3, 9, 3), [0.62, 0.62, 0.6]);
+  K.collider(x - 1.5, H, rz - 1.5, x + 1.5, H + 8.5, rz + 1.5);
+  K.basic(G.cube, TM.box(x, deckY - 1.5, rz, W + 6, 1.6, 4), [0.5, 0.5, 0.5]);
+  K.sprite(x, H + 9, rz, [1, 0.08, 0.04], 6, 0.9, ANIM.blink, 0, K.rd());
+  for (let y = 12; y < H; y += 7) K.sprite(x, y, rz - 1.6, [0.85, 0.9, 1.0], 2, 0.5);
+  const reach = r.hw + RIVER.ramp * 0.5;
+  for (const s of [-1, 1])
+    for (let k = 1; k <= 9; k++) {
+      const z = rz + s * (reach * k) / 9, top = H + 1 + k * 0.8, yd = ROADY + bridgeH(x, z) + 0.8;
+      for (const lx of [x - W / 2 + 0.3, x + W / 2 - 0.3]) K.emissive(G.cube, TM.seg(x, top, rz, lx, yd, z, 0.3), [0.8, 0.85, 0.95], 0.7);
+    }
+}
+// a tunnel under the river: on each bank a covered portal the road runs into (the traffic dips out of
+// sight inside, carPose), lit inside, closed at the water's edge
+function tunnel(K, x, r, own) {
+  const { G } = K, rz = riverZk(r, x), W = AVE.w, conc = [0.24, 0.23, 0.22];
+  for (const s of [-1, 1]) {
+    const zk = rz + s * (r.hw + 1), ze = rz + s * (r.hw + TUNNEL.len), z0 = Math.min(zk, ze), z1 = Math.max(zk, ze), zm = (z0 + z1) / 2;
+    if (!own(x, zm)) continue;
+    for (const sx of [-1, 1]) {
+      K.basic(G.cube, TM.box(x + sx * (W / 2 + 0.5), 3.75, zm, 1, 7.5, z1 - z0), conc);
+      K.collider(x + sx * (W / 2 + 0.5) - 0.5, 0, z0, x + sx * (W / 2 + 0.5) + 0.5, 7.5, z1);
+    }
+    K.basic(G.cube, TM.box(x, 7, zm, W + 2, 1, z1 - z0), conc);
+    K.collider(x - W / 2 - 1, 6.5, z0, x + W / 2 + 1, 7.5, z1);
+    K.basic(G.cube, TM.box(x, 3.5, zk, W, 7, 0.8), [0.05, 0.05, 0.055]);
+    K.collider(x - W / 2, 0, zk - 0.4, x + W / 2, 7, zk + 0.4);
+    // the portal: a dark lintel with a lit band, lane lights; lamps inside on the ceiling
+    K.basic(G.cube, TM.box(x, 7.6, ze, W + 3, 2.2, 1.2), [0.42, 0.41, 0.39]);
+    K.emissive(G.cube, TM.box(x, 7.6, ze + s * 0.62, W - 2, 0.9, 0.06), [0.75, 0.85, 1.0], 2.6);
+    for (const lx of [x - 4, x + 4]) K.sprite(lx, 6.6, ze + s * 1.5, [0.3, 1, 0.4], 3, 0.35);
+    // the lit ceiling inside: two rows of sodium lights, glowing out of the mouth
+    for (const lx of [x - 5, x + 5]) K.emissive(G.cube, TM.box(lx, 6.42, zm, 0.5, 0.08, z1 - z0 - 4), [1, 0.7, 0.38], 1.8);
+    for (let z = z0 + 6; z < z1 - 4; z += 8) for (const lx of [x - 5, x + 5]) K.sprite(lx, 6.2, z, [1, 0.72, 0.4], 3, 0.6);
+    for (let t = 2; t < 26; t += 8) K.splat(x, ze - s * t, 0.8, 0.55, 0.3, 6);
+    // lamps either side of the mouth
+    for (const lx of [x - W / 2 - 2.5, x + W / 2 + 2.5]) K.streetLamp(lx, ze + s * 3, Math.sign(x - lx), 0, LAMP, 6);
   }
 }
 // an elevated line runs above some avenues, from one riverside (or slot) to the next;
@@ -961,30 +1037,37 @@ function genChunk(cx, cz, lod, Q) {
       const A = zs[b], B = zs[b + 1];
       if (B.z < Z0 - 400 || A.z > Z1 + 400) continue;
       const r = A.kind === 'n' ? riverSlot(A.k) : null;
-      if (r) {
+      const cross = r ? crossingOf(i, r) : null;
+      if (r && cross === 'tunnel') {
+        // the road runs on into the portals, the tunnel goes under the river
+        const rz = riverZk(r, x);
+        roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(rz - r.hw - 1, Z1));
+        roadStrip(K, 1, x, AVE.w, 2, Math.max(rz + r.hw + 1, Z0), Math.min(B.z, Z1));
+        tunnel(K, x, r, own);
+      } else if (r) {
         const rz = riverZk(r, x), zA = rz - r.hw - RIVER.ramp, zB = rz + r.hw + RIVER.ramp;
         roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(zA, Z1));
         roadStrip(K, 1, x, AVE.w, 2, Math.max(zB, Z0), Math.min(B.z, Z1));
-        bridge(K, x, r, AVE.w, (i === 0 && r.k === 0) || (i !== 0 && ih2(i, r.k, 62) < 0.1), own);
+        bridge(K, x, r, AVE.w, cross, own);
       } else roadStrip(K, 1, x, AVE.w, 2, Math.max(A.z, Z0), Math.min(B.z, Z1));
       // the streets of the superblocks either side end on this stretch: no lamps across their mouths
       const crosses = [{ pos: A.z, w: AVE.w }, { pos: B.z, w: AVE.w }];
       if (a > 0) for (const j of sbLayout(superblock(xs[a - 1].i, A, B)).edgeJ.x1) crosses.push(j);
       for (const j of sbLayout(superblock(i, A, B)).edgeJ.x0) crosses.push(j);
       if (r) {
-        const rz = riverZk(r, x);
-        roadLamps(K, 1, x, AVE.w, A.z, rz - r.hw - RIVER.ramp, own, crosses, LAMP, step);
-        roadLamps(K, 1, x, AVE.w, rz + r.hw + RIVER.ramp, B.z, own, crosses, LAMP, step);
+        const rz = riverZk(r, x), m = cross === 'tunnel' ? TUNNEL.len + 2 : RIVER.ramp;
+        roadLamps(K, 1, x, AVE.w, A.z, rz - r.hw - m, own, crosses, LAMP, step);
+        roadLamps(K, 1, x, AVE.w, rz + r.hw + m, B.z, own, crosses, LAMP, step);
       } else roadLamps(K, 1, x, AVE.w, A.z, B.z, own, crosses, lampColor(superblock(i, A, B)), step);
       if (!r && boulevardX(i)) median(K, 1, x, A.z, B.z, own, lampColor(superblock(i, A, B)), step);
-      lanes(K, 1, x, Math.max(A.z, Z0), Math.min(B.z, Z1));
+      lanes(K, 1, x, Math.max(A.z, Z0), Math.min(B.z, Z1), cross === 'tunnel');
     }
   }
   // ---- elevated lines, from one river slot to the next ----
   for (const { i, x } of xs) {
     if (x < X0 || x >= X1 || !hasTrain(i)) continue;
     for (let k = riverK(Z0) - 1; k <= riverK(Z1) + 1; k++) {
-      const a = riverSlot(k), b = riverSlot(k + 1), za = a.zc + (a.on ? RIVER.row : 0), zb = b.zc - (b.on ? RIVER.row : 0);
+      const a = riverSlot(k), b = riverSlot(k + 1), za = a.zc + (a.on ? a.row : 0), zb = b.zc - (b.on ? b.row : 0);
       if (zb > Z0 && za < Z1) trainLine(K, x, za, zb, own);
     }
   }
@@ -1143,7 +1226,7 @@ function chunkRaster(out) {
   // the promenades along a river
   for (let r = 0; r < TP; r++) {
     const wz = Z0 + (r + 0.5) * TPX, rv = riverAt(wz);
-    if (!rv || Math.abs(wz - rv.zc) > RIVER.row) continue;
+    if (!rv || Math.abs(wz - rv.zc) > rv.row) continue;
     for (let c = 0; c < TP; c++) {
       const wx = X0 + (c + 0.5) * TPX, d = Math.abs(wz - riverZk(rv, wx));
       if (d > rv.hw && d < rv.hw + 11) lay[(r * TP + c) * 4] = 6;
