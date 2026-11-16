@@ -151,21 +151,26 @@ function building(K, x0, z0, x1, z1, H, sides, nl, H0, opt) {
   if (H > 40) K.sprite(tcx, top + 0.6, tcz, [1, 0.08, 0.04], 5, 0.8, ANIM.blink, 0, rd());
   if (opt.roof === false) return res;
   // rooftops: LED crowns, corner strips, spires, warning lights, water tanks, machinery, billboards
-  if (H > 140 && rd() < 0.6) {
-    const c = pickd(NEON.slice(0, 4).concat([[0.9, 0.95, 1.0]])), it = Rd(3, 6);
+  const lm = !!opt.landmark;
+  if ((H > 140 && rd() < 0.6) || lm) {
+    const c = lm ? pickd([[0.9, 0.95, 1.0], [1.0, 0.8, 0.45], [0.45, 0.75, 1.0]]) : pickd(NEON.slice(0, 4).concat([[0.9, 0.95, 1.0]])), it = lm ? 6 : Rd(3, 6);
+    // a landmark's top storeys glow: a lantern that can be seen from anywhere in town
+    if (lm) K.emissive(G.cube, TM.box(tcx, top - 5, tcz, tw + 0.4, 7, td + 0.4), c, 3.6);
     for (const s of [-1, 1]) {
       K.emissive(G.cube, TM.box(tcx, top - 0.4, tcz + s * td / 2, tw + 0.3, 0.5, 0.3), c, it);
       K.emissive(G.cube, TM.box(tcx + s * tw / 2, top - 0.4, tcz, 0.3, 0.5, td + 0.3), c, it);
     }
-    if (rd() < 0.5) {
+    if (rd() < 0.5 || lm) {
       const yb = tiers[tiers.length - 1][4];
       for (const [cx, cz] of [[tx0, tz0], [tx1, tz0], [tx0, tz1], [tx1, tz1]]) K.emissive(G.cube, TM.box(cx, (yb + top) / 2, cz, 0.35, top - yb, 0.35), c, it * 0.6);
     }
   }
-  if (H > 200 && rd() < 0.75) {
-    const sh = Rd(25, 70);
+  if ((H > 200 && rd() < 0.75) || (lm && H > 200)) {
+    const sh = lm ? Rd(50, 80) : Rd(25, 70);
     K.basic(G.cyl, TM.box(tcx, top + sh / 2, tcz, 1.4, sh, 1.4), [0.3, 0.3, 0.32]);
     K.sprite(tcx, top + sh + 0.6, tcz, [1, 0.08, 0.04], 8, 1.2, ANIM.blink, 0, rd());
+    // a landmark's beacon: a white light on the spire, seen from across town
+    if (lm) { K.sprite(tcx, top + sh * 0.55, tcz, [1, 1, 1], 14, 3.2, ANIM.blink, 0, 0.5); K.sprite(tcx, top + 1.5, tcz, [1, 0.97, 0.9], 10, 6); }
   }
   if (H > 90) for (const [cx, cz] of [[tx0 + 0.5, tz0 + 0.5], [tx1 - 0.5, tz1 - 0.5]]) K.sprite(cx, top + 0.6, cz, [1, 0.08, 0.04], 5, 0.8, ANIM.blink, 0, rd());
   if (!full) return res;
@@ -235,19 +240,21 @@ function blockMix(x, z) {
   const c = coreField(x, z), urban = 1 - smooth(0.06, 0.3, c);
   return {
     c,
-    ind: smooth(0.62, 0.78, vnoise(x / 1800 + 17.3, z / 1800 - 3.1)) * urban,
+    ind: smooth(0.62, 0.78, industryField(x, z)) * urban,
     old: smooth(0.61, 0.77, vnoise(x / 1500 - 41.7, z / 1500 + 9.2)) * urban,
     sub: smooth(0.46, 0.66, vnoise(x / 2600 + 5.5, z / 2600 + 77.1)) * (1 - smooth(0.0, 0.08, c)),
   };
 }
-// what a block becomes (the same draw for the piece that builds it and the ones that paint its ground)
+// what a block becomes (the same draw for the piece that builds it and the ones that paint its ground).
+// A neighbourhood is one thing or the other with a clean edge between (a little give either side, so
+// the edge follows the streets, not a line): heights still grade gently across it.
 function blockKind(blk) {
-  const mx = blockMix(blk.cx, blk.cz);
-  if (ih(blk.seed, 94) < 0.045 && mx.c < 0.35) return 'park';   // now and then a square or a small park
-  if (ih(blk.seed, 91) < mx.ind) return 'industrial';
-  // in the suburbs nearly every block is houses (a few shops and flats among them)
-  if (ih(blk.seed, 92) < (blk.sbKind === 'suburb' ? Math.max(mx.sub, 0.88) : mx.sub)) return 'houses';
-  if (ih(blk.seed, 93) < mx.old) return 'old';
+  if (blk.landmark) return 'apartments';
+  const mx = blockMix(blk.cx, blk.cz), j = (ih(blk.seed, 95) - 0.5) * 0.24;
+  if (ih(blk.seed, 94) < 0.045 && mx.c < 0.35 && !blk.square) return 'park';   // now and then a small park
+  if (mx.ind > 0.5 + j) return 'industrial';
+  if ((blk.sbKind === 'suburb' ? Math.max(mx.sub, 0.88) : mx.sub) > 0.5 + j) return 'houses';
+  if (mx.old > 0.5 + j) return 'old';
   return 'apartments';
 }
 // its ground, painted by every piece it reaches: paving, concrete for industry, lawns round houses
@@ -256,6 +263,7 @@ function blockGround(K, blk) {
   K.layPoly(pts, kind === 'industrial' ? 0 : 8);
   if (kind === 'houses' || kind === 'park') { const inner = insetPoly(blk.poly, 3.6); if (inner) K.layPoly(inner.map((p) => [p.x, p.z]), 2); }
   if (kind === 'park') { const c = polyBox(blk.poly); K.layRect((c.x0 + c.x1) / 2 - 1.6, c.z0 + 3.6, (c.x0 + c.x1) / 2 + 1.6, c.z1 - 3.6, 8); K.layRect(c.x0 + 3.6, (c.z0 + c.z1) / 2 - 1.6, c.x1 - 3.6, (c.z0 + c.z1) / 2 + 1.6, 8); }
+  if (blk.square && (kind === 'apartments' || kind === 'old')) squareGround(K, blk);
 }
 // a kerb along every edge of a block, and the edge's direction inwards
 function kerbs(K, poly) {
@@ -318,14 +326,17 @@ function genBlock(K, sb, blk) {
   if (trees && rd() < 0.8) alongEdges(blk.poly, 1.6, 13, (x, z) => { if (rd() < 0.8 * Q.trees) K.tree(x + Rd(-1, 1), z + Rd(-1, 1), Rd(0.8, 1.1)); });
   // the block's own frame: local x along its longest street
   K.setFrame(blk.cx, blk.cz, -blk.angle);
-  const lp = inner.map((p) => { const [x, z] = K.toLocal(p.x, p.z); return { x, z }; });
+  let lp = inner.map((p) => { const [x, z] = K.toLocal(p.x, p.z); return { x, z }; });
+  // a corner opening onto a square: the buildings stand back from it, round an L
+  const sq = blk.square && (kind === 'apartments' || old) ? squareCorner(K, sb, blk, polyBox(lp), lc) : null;
+  if (sq) lp = sq.lp;
   const bx = polyBox(lp), rectish = Math.abs(polyArea(lp)) > 0.97 * (bx.x1 - bx.x0) * (bx.z1 - bx.z0);
   const placed = [];
   let res = null;
   if (kind === 'industrial') industrialLots(K, lp, bx, placed);
-  else if (kind === 'houses') houseLots(K, lp, bx, placed);
+  else if (kind === 'houses') houseLots(K, blk, lp, bx, placed);
   else res = apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, placed);
-  const special = res === 'site' || res === 'plaza';
+  const special = res === 'site' || res === 'plaza' || !!sq;
   if (special) res = null;
   // what the rectangles left (the corners of an odd-shaped block): parking, or trees, more of them
   // the less of the block the buildings took
@@ -348,8 +359,21 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
   const quiet = sb.kind === 'suburb' || sub > 0.5, calm = quiet || sub > 0.25;
   const nl0 = old ? 0.55 + nlBase * 0.6 : H0 > 30 ? nlBase + (c > 0.42 ? 0.15 : 0) : 0.15 + nlBase * 0.35;
   const nl = quiet ? Math.min(nl0, 0.2) : calm ? Math.min(nl0, 0.4) : nl0;
-  const maxLot = old ? 17 : H0 > 170 ? 70 : H0 > 70 ? 40 : 28 - 6 * sub;
+  const maxLot = old ? 17 : H0 > 170 ? 70 : H0 > 70 ? 40 : 28 - 6 * sub, capH = towerCap(blk.cx, blk.cz);
   const styleOpt = old ? { style: rd() < 0.7 ? 2 : 0, tiers: false } : {};
+  // the landmark tower at the peak of a centre: alone in its block, with a little plaza round it
+  if (blk.landmark) {
+    const s = Math.min(blk.landmark.h > 300 ? 50 : 38, (bx.x1 - bx.x0) * 0.72, (bx.z1 - bx.z0) * 0.72), cx = (bx.x0 + bx.x1) / 2, cz = (bx.z0 + bx.z1) / 2;
+    const lot = { x0: cx - s / 2, z0: cz - s / 2, x1: cx + s / 2, z1: cz + s / 2 };
+    const bld = K.building(lot.x0, lot.z0, lot.x1, lot.z1, blk.landmark.h, 15, Math.max(nl, 0.6), blk.landmark.h, { style: K.pick([1, 3, 4]), landmark: true, shop: 0.8 });
+    placed.push(lot);
+    for (const [x, z] of [[lot.x0 - 6, lot.z0 - 6], [lot.x1 + 6, lot.z0 - 6], [lot.x0 - 6, lot.z1 + 6], [lot.x1 + 6, lot.z1 + 6]]) {
+      K.sprite(x, 0.6, z, [1, 0.92, 0.8], 5, 0.8);
+      K.splat(x, z, 0.8, 0.7, 0.55, 7);
+    }
+    const [wx, wz] = K.toWorld(bld.x, bld.z);
+    return { x: wx, z: wz, top: bld.top, H: bld.H };
+  }
   // a plaza, or a building site with its tower crane (one is always beside Halvard Bay's downtown),
   // in blocks that are plain rectangles lined up with the avenues
   const plain = rectish && !K.framed;
@@ -372,14 +396,19 @@ function apartmentLots(K, sb, blk, lp, bx, rectish, old, H0, nlBase, c, lc, plac
     if (r1 < 0.05) { if (rd() < Q.trees) K.tree((lot.x0 + lot.x1) / 2, (lot.z0 + lot.z1) / 2, Rd(0.9, 1.3)); continue; }
     let H = H0 * (0.3 + 0.95 * Math.pow(r2, 1.3));
     if (H0 > 120 && r3 < 0.06) H *= 1.4;
+    H = Math.min(H, capH);
+    // along an avenue the buildings are a little taller and have shops (a main street)
+    const front = !!(lot.sides & blk.ave);
+    if (front && H0 < 120) H *= 1.25;
     H = Math.max(Math.min(H, Math.max(w, d) * 7.5), old ? 9 + r4 * 3 : 7 + r4 * 6);
     // low-rise where it should be: old town, and next to the houses
     H = Math.min(H, old || sb.kind === 'oldtown' ? 18 : sb.kind === 'suburb' || sub > 0.5 ? 10 : sub > 0.25 ? 16 : Infinity);
     const g = old ? 0 : H0 > 60 ? 1.5 + r5 * 2.5 : r5 < 0.5 ? 0 : 1 + r5 * 1.5;
     const opt = { ...styleOpt };
     if (old) opt.shop = clamp(nl + R(-0.2, 0.3), 0.2, 1);
-    else if (quiet) opt.shop = R(0.03, 0.14);
-    else if (calm) opt.shop = R(0.08, 0.3);
+    else if (quiet) opt.shop = front ? R(0.18, 0.32) : R(0.03, 0.14);
+    else if (calm) opt.shop = front ? R(0.25, 0.4) : R(0.08, 0.3);
+    else if (front) opt.shop = clamp(nl * 0.9 + 0.2 + (r4 - 0.5) * 0.3, 0.1, 1);
     const bld = K.building(lot.x0 + g / 2, lot.z0 + g / 2, lot.x1 - g / 2, lot.z1 - g / 2, H, lot.sides, nl, H0, opt);
     placed.push(lot);
     if (bld) {
@@ -547,10 +576,11 @@ function house(K, cx, cz, hw, hd, H, style, wall) {
   K.collider(cx - hw, H, cz - hd * 0.5, cx + hw, H + rh * 0.55, cz + hd * 0.5);
 }
 const houseWall = (K, style) => (style ? [K.R(0.3, 0.42), K.R(0.14, 0.2), K.R(0.08, 0.12)] : [K.R(0.38, 0.55), K.R(0.36, 0.5), K.R(0.32, 0.44)]);
-// a block of houses where the suburbs reach into town (in the block's frame)
-function houseLots(K, lp, bx, placed) {
+// a block of houses where the suburbs reach into town (in the block's frame). Half of the blocks on an
+// avenue have a row of low shops along it instead of houses (a main street), the houses behind.
+function houseLots(K, blk, lp, bx, placed) {
   const { R, rd, Rd, Q } = K;
-  const lots = [];
+  const lots = [], shops = blk.ave && ih(blk.seed, 96) < 0.5 ? blk.ave : 0;
   splitLots(K, bx.x0, bx.z0, bx.x1, bx.z1, 22, 0, 15, lots, 0.05);
   for (const lot0 of lots) {
     const r = K.rng(), hwR = R(8, 12), hdR = R(7, 10), two = K.rng() < 0.3, Hh = two ? R(6, 7) : R(3.2, 3.6), j1 = R(-1, 1), j2 = R(-1, 1), style = K.rng() < 0.5 ? 0 : 2;
@@ -558,6 +588,11 @@ function houseLots(K, lp, bx, placed) {
     if (!lot) continue;
     const w = lot.x1 - lot.x0, d = lot.z1 - lot.z0;
     if (w < 9 || d < 9) continue;
+    if (lot.sides & shops) {
+      K.building(lot.x0 + 0.8, lot.z0 + 0.8, lot.x1 - 0.8, lot.z1 - 0.8, R(6.5, 10), lot.sides, 0.15, 10, { style: rd() < 0.5 ? 0 : 2, tiers: false, shop: R(0.22, 0.4) });
+      placed.push(lot);
+      continue;
+    }
     // a lot with no street in front is a back garden
     if (r < 0.12 || !lot.sides) { K.tree((lot.x0 + lot.x1) / 2, (lot.z0 + lot.z1) / 2, Rd(1, 1.5), rd() < 0.4); continue; }
     const hw = Math.min(w - 4, hwR) / 2, hd = Math.min(d - 4, hdR) / 2, cx = (lot.x0 + lot.x1) / 2 + j1, cz = (lot.z0 + lot.z1) / 2 + j2;
@@ -854,7 +889,6 @@ function bridge(K, x, r, w, grand, own) {
 }
 // an elevated line runs above some avenues, from one riverside (or slot) to the next;
 // its trains loop along that stretch (ANIM.train), stations at both ends
-const hasTrain = (i) => i === -1 || (i !== 0 && ih(i, 61) < 0.16);
 function trainLine(K, x, za, zb, own) {
   const { G } = K, px = x;
   for (let z = Math.ceil(za / 4) * 4; z < zb; z += 4) {
@@ -982,10 +1016,10 @@ function genChunk(cx, cz, lod, Q) {
     const L = sbLayout(sb), lc = lampColor(sb), half = AVE.w / 2;
     if (sb.river) { riverRow(K, sb, X0, X1, Z0, Z1, own); continue; }
     const rx0 = sb.x0 + half, rz0 = sb.z0 + half, rx1 = sb.x1 - half, rz1 = sb.z1 - half;
-    if (sb.kind === 'park') {
+    if (sb.kind === 'park' || sb.special) {
       const b = { x0: rx0, z0: rz0, x1: rx1, z1: rz1, cx: (rx0 + rx1) / 2, cz: (rz0 + rz1) / 2 };
-      if (near(rx0, rz0, rx1, rz1)) parkGround(K, sb, b);
-      if (own(b.cx, b.cz)) park(K, sb, b);
+      if (near(rx0, rz0, rx1, rz1)) (sb.special ? specialGround : parkGround)(K, sb, b);
+      if (own(b.cx, b.cz)) { if (sb.special) keep(specialPlace(K, sb, b)); else park(K, sb, b); }
       continue;
     }
     const sstep = sb.kind === 'suburb' ? step * 2 : step;

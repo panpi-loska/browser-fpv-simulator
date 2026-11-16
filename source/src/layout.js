@@ -142,7 +142,7 @@ function sbLayout(sb) {
   const half = AVE.w / 2, X0 = sb.x0 + half, X1 = sb.x1 - half, Z0 = sb.z0 + half, Z1 = sb.z1 - half;
   const L = { style: 'grid', roads: [], blocks: [], crossings: [], edgeJ: { x0: [], x1: [], z0: [], z1: [] } };
   sb.layout = L;
-  if (sb.kind === 'park' || sb.river) { L.blocks.push({ poly: rect(X0, Z0, X1, Z1) }); finishBlocks(sb, L); return L; }
+  if (sb.kind === 'park' || sb.river || sb.special) { L.blocks.push({ poly: rect(X0, Z0, X1, Z1) }); finishBlocks(sb, L); return L; }
   const G = GRID[sb.kind] || GRID.residential, w = G.w, rng = mulberry32(sb.seed ^ 0x2545f491);
   // residential blocks are 60 or 120 m deep, by neighbourhood (a slow field, so neighbours agree)
   const sz = sb.kind === 'residential' && vnoise(sb.cx / 2800 + 61.3, sb.cz / 2800 - 7.7) > 0.52 ? 120 : G.sz;
@@ -217,13 +217,42 @@ function sbLayout(sb) {
 function rect(x0, z0, x1, z1) {
   return [{ x: x0, z: z0, t: { side: 'z0' } }, { x: x1, z: z0, t: { side: 'x1' } }, { x: x1, z: z1, t: { side: 'z1' } }, { x: x0, z: z1, t: { side: 'x0' } }];
 }
-// each block: its centre (which piece owns it), its seed; blocks line up with the avenues
+// each block: its centre (which piece owns it), its seed; blocks line up with the avenues.
+// ave: the sides that face an avenue (1 x0, 2 x1, 4 z0, 8 z1, as a lot's sides); landmark: the block
+// nearest a centre's peak holds its landmark tower; square: the corner that opens onto a square
 function finishBlocks(sb, L) {
+  const half = AVE.w / 2, X0 = sb.x0 + half, X1 = sb.x1 - half, Z0 = sb.z0 + half, Z1 = sb.z1 - half;
+  const sq = sb.river || sb.special || sb.kind === 'park' ? [] : squareCorners(sb);
   L.blocks.forEach((b, i) => {
-    const c = polyCentroid(b.poly);
+    const c = polyCentroid(b.poly), bx = polyBox(b.poly);
     b.cx = c.x; b.cz = c.z;
     b.seed = pcg((sb.seed ^ pcg(i * 131 + 7)) >>> 0);
     b.angle = 0;
     b.sbKind = sb.kind;
+    b.ave = (bx.x0 <= X0 + 0.5 ? 1 : 0) | (bx.x1 >= X1 - 0.5 ? 2 : 0) | (bx.z0 <= Z0 + 0.5 ? 4 : 0) | (bx.z1 >= Z1 - 0.5 ? 8 : 0);
+    for (const q of sq) {
+      const qx = q.sx > 0 ? X0 : X1, qz = q.sz > 0 ? Z0 : Z1;
+      if (Math.abs((q.sx > 0 ? bx.x0 : bx.x1) - qx) < 0.5 && Math.abs((q.sz > 0 ? bx.z0 : bx.z1) - qz) < 0.5) b.square = { x: qx, z: qz, sx: q.sx, sz: q.sz };
+    }
   });
+  if (sb.river || sb.special || sb.kind === 'park') return;
+  for (const p of corePeaks(sb.cx, sb.cz)) {
+    if (p.px < sb.x0 - 60 || p.px > sb.x1 + 60 || p.pz < sb.z0 - 60 || p.pz > sb.z1 + 60) continue;
+    let best = null, bd = Infinity;
+    for (const b of L.blocks) {
+      const bx = polyBox(b.poly), d = Math.hypot(b.cx - p.px, b.cz - p.pz);
+      if (bx.x1 - bx.x0 > 34 && bx.z1 - bx.z0 > 34 && d < bd) { bd = d; best = b; }
+    }
+    // a peak just over an avenue belongs to the superblock it is in (the other side gets none)
+    const inside = p.px >= sb.x0 && p.px < sb.x1 && p.pz >= sb.z0 && p.pz < sb.z1;
+    if (best && inside) best.landmark = { h: landmarkH(p) };
+  }
+}
+// the corners of this superblock that open onto a square (where two avenues cross, now and then,
+// in town: never by the river, in the suburbs or in industry)
+const squareAt = (i, l) => l.kind === '' && !hasTrain(i) && ih2(i * 7 + 3, l.k * 64 + l.m, 66) < 0.05 && ['downtown', 'midtown', 'residential', 'oldtown'].includes(districtAt(aveX(i), l.z));
+function squareCorners(sb) {
+  const out = [];
+  for (const [i, l, sx, sz] of [[sb.i, sb.A, 1, 1], [sb.i + 1, sb.A, -1, 1], [sb.i, sb.B, 1, -1], [sb.i + 1, sb.B, -1, -1]]) if (squareAt(i, l)) out.push({ sx, sz });
+  return out;
 }

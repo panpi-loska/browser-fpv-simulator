@@ -317,7 +317,7 @@ fn shadeBuilding(I: Inst, w: vec3f, n: vec3f, lp: vec3f, V: vec3f) -> vec3f {
       c = g * (1.0 - fr * 0.5) + reflC * 0.6;
     }
     // a coloured sign over the window: most shops downtown, few where there are few shops
-    if (on && rnd(sh ^ 0x77u) < 0.35 + I.p.w && w.y > 3.75 && w.y < 4.45 && sf > 0.1 && sf < 0.9) {
+    if (on && rnd(sh ^ 0x77u) < I.p.w * I.p.w * 1.6 && w.y > 3.75 && w.y < 4.45 && sf > 0.1 && sf < 0.9) {
       let flick = select(1.0, 0.15, rnd(sh ^ 5u) < 0.15 && rnd(sh ^ u32(u.cam.w * 9.0)) < 0.04);
       c = (hue(rnd(sh ^ 0x55u)) * 2.2 + 0.15) * flick;
     }
@@ -561,6 +561,10 @@ fn suburbLights(w: vec3f) -> vec3f {
   let L = lightAt(w);
   var alb: vec3f;
   if (ty == 2u) { alb = mix(vec3f(0.035, 0.06, 0.028) * (0.6 + 0.8 * fbm(w.xz * 0.15)), vec3f(0.1, 0.09, 0.075), path); }
+  else if (ty == 9u) {   // mown grass: a fairway or a green, in stripes
+    let st = step(0.5, fract((w.x + w.z) / 16.0));
+    alb = mix(vec3f(0.055, 0.105, 0.04) * (0.82 + 0.3 * st) * (0.85 + 0.3 * fbm(w.xz * 0.05)), vec3f(0.12, 0.11, 0.085), path);
+  }
   else if (ty == 6u) {
     let g = fract(w.xz / 2.0); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
     alb = vec3f(0.11, 0.1, 0.095) * mix(0.7, 1.0, smoothstep(0.0, 0.05, e));

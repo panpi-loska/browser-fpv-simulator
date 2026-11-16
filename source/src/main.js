@@ -402,7 +402,7 @@ function frame(now) {
       + `${cs.full} pieces near, ${cs.lite} far, ${cs.pending} coming  ${R.instances} instances\nlibfpv ${core.version}`;
     if (f) {
       const st = core.inputStatus();
-      s += `\nx ${f.pos[0].toFixed(0)}  y ${f.pos[1].toFixed(1)}  z ${f.pos[2].toFixed(0)}  ${f.speedKmh.toFixed(0)} km/h  ${DISTRICTS[superblockAt(f.pos[0], f.pos[2]).kind].label}\n`
+      s += `\nx ${f.pos[0].toFixed(0)}  y ${f.pos[1].toFixed(1)}  z ${f.pos[2].toFixed(0)}  ${f.speedKmh.toFixed(0)} km/h  ${placeLabel(superblockAt(f.pos[0], f.pos[2]))}\n`
         + `${st.source}${st.name ? ' ' + st.name : ''}  ${f.armed ? 'ARMED' : core.armingText() || 'disarmed'}\n`
         + `video ${f.video.cnr.toFixed(1)} dB CNR  ${f.video.rssi.toFixed(0)} dBm  wind ${Math.hypot(...f.wind).toFixed(1)} m/s`;
     }

@@ -17,7 +17,11 @@ with **WebGPU** (Chrome or Edge on desktop).
   streets and neon, docks with cranes, containers and ships, industrial zones, quiet suburbs, parks, and rivers with bridges.
 - Streets that vary: a believable city grid, not a checkerboard. Block sizes follow the district (small old-town
   blocks, long residential blocks, big industrial lots), some streets stop at T junctions, some blocks are merged,
-  and there are pocket parks, parking lots and tree-lined boulevards with planted medians.
+  and there are pocket parks, parking lots and tree-lined boulevards with planted medians. Main streets have shops
+  along the avenues, and now and then two avenues cross at a square with a monument or a fountain.
+- A real skyline: a few big business centres, each with a landmark tower with a lit crown, and smaller office
+  clusters between them. Rivers wind through town.
+- Rare places to find: stadiums, rail yards, hospitals with a helipad, universities, cemeteries and golf courses.
 - Everything collides: buildings, bridges, train viaducts, cranes, ships. Water kills the props.
 - Wind, battery sag, prop damage, turtle mode.
 - Analog or digital video, chosen in the menu: analog has the snow and rolling lines of a real analog link, digital is
@@ -75,7 +79,8 @@ node build.mjs --min  # smaller output
 
 How the endless city works: `source/src/city.js` defines the city with formulas that hold anywhere
 (rivers, avenues, districts), `layout.js` lays out the streets and blocks between the avenues,
-`gen.js` builds one 256 m piece from them in a Web Worker, and `stream.js`
+`gen.js` builds one 256 m piece from them in a Web Worker (`places.js` adds the squares and the special places),
+and `stream.js`
 keeps the pieces around the drone loaded (in full nearby, as a skyline farther out) and gives each nearby
 piece to libfpv as collision.
 
