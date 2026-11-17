@@ -816,6 +816,11 @@ fn suburbLights(w: vec3f) -> vec3f {
     alb = vec3f(0.11, 0.1, 0.095) * mix(0.7, 1.0, smoothstep(0.0, 0.05, e));
   }
   else if (ty == 7u && !batalhaMap()) { alb = vec3f(0.02, 0.022, 0.02) * (0.6 + 0.8 * fbm(w.xz * 0.01)); }
+  else if (ty == 8u && batalhaMap()) {   // Batalha's squares and forecourt: small warm clay-coloured tiles
+    let g = fract(w.xz / 0.8); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
+    let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 0.8);
+    alb = vec3f(0.2, 0.145, 0.115) * (0.85 + 0.3 * h21(floor(w.xz / 0.8))) * (0.9 + 0.2 * fbm(w.xz * 0.05)) * mix(1.0, mix(0.72, 1.0, smoothstep(0.0, 0.06, e)), seams);
+  }
   else if (ty == 8u) {   // paving: the pavements round a block
     let g = fract(w.xz / 1.5); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
     let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 1.5);

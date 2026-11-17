@@ -4,7 +4,7 @@
 // OpenStreetMap (batalha-data.js); what OSM does not have, the houses, the trees in the yards and the
 // cerrado round the town, is made here the way the town looks from above: one-storey houses side by
 // side along every street, their fronts on the pavement and orange tiled roofs, a yard behind with a
-// mango tree, asphalt streets in town and red dirt ones on the edges, the bush all around.
+// mango tree, asphalt streets in town and red dirt roads on the edges, the bush all around.
 // genBatalha makes a 256 m piece in the same form as genChunk (gen.js), so the streamer, the
 // renderer and libfpv's collision take it as they take Halvard Bay. The ground is flat.
 // ---------------------------------------------------------------------------
@@ -124,6 +124,21 @@ function fitRect(poly) {
   for (const p of poly) { const s = p.x * ux + p.z * uz, t = -p.x * uz + p.z * ux; s0 = Math.min(s0, s); s1 = Math.max(s1, s); t0 = Math.min(t0, t); t1 = Math.max(t1, t); }
   const sc = (s0 + s1) / 2, tc = (t0 + t1) / 2;
   return { x: sc * ux - tc * uz, z: sc * uz + tc * ux, hx: (s1 - s0) / 2, hz: (t1 - t0) / 2, ux, uz, yaw: Math.atan2(-uz, ux) };
+}
+// half sizes for a rectangle round (r.x, r.z) turned by r.yaw that keep it off the asphalt by gap:
+// OSM's outlines sometimes reach a little into the street they front, so they are made smaller
+function clearHalf(D, r, hx, hz, gap = 0.8) {
+  const c = Math.cos(r.yaw), s = Math.sin(r.yaw), W = (lx, lz) => [r.x + lx * c + lz * s, r.z - lx * s + lz * c];
+  const worst = (hx, hz) => {
+    let m = Infinity;
+    for (const [ax, az, bx, bz] of [[-hx, -hz, hx, -hz], [hx, -hz, hx, hz], [hx, hz, -hx, hz], [-hx, hz, -hx, -hz]]) {
+      const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 0.75);
+      for (let k = 0; k <= n; k++) m = Math.min(m, roadClear(D, ...W(ax + (bx - ax) * k / n, az + (bz - az) * k / n), null)[0]);
+    }
+    return m;
+  };
+  for (let i = 0; i < 60 && worst(hx, hz) < gap; i++) { hx = Math.max(hx - 0.5, hx * 0.5 + 1); hz = Math.max(hz - 0.5, hz * 0.5 + 1); }
+  return [hx, hz];
 }
 function segDist(s, x, z) {
   const t = clamp((x - s.ax) * s.ux + (z - s.az) * s.uz, 0, s.len);
@@ -245,7 +260,7 @@ function lotsOf(D, s, side) {
 function pitchedRoof(K, cx, cz, dx, dz, len, hw, H, col, wallCol, over = 0.45) {
   const { G } = K, rh = Math.min(hw * 0.55, 4.5), a = Math.atan2(rh, hw), sn = Math.sin(a), cs = Math.cos(a);
   const slope = Math.hypot(hw, rh) + over;
-  K.setFrame(cx, cz, Math.atan2(-dz, dx));
+  K.setFrame(cx, cz, Math.atan2(-dz, dx) || 1e-9);
   // the slopes: local x the ridge, +z the one side, -z the other
   for (const side of [1, -1]) {
     // TM.pitch turns local +z to (0, -s, c): this side's slope falls away from the ridge
@@ -268,7 +283,7 @@ function roofRect(K, x0, z0, x1, z1, H, col, wallCol, frame) {
   const w = x1 - x0, d = z1 - z0, alongX = w >= d;
   const [cx, cz] = K.toWorld((x0 + x1) / 2, (z0 + z1) / 2), [ex, ez] = K.toWorld(alongX ? (x0 + x1) / 2 + 1 : (x0 + x1) / 2, alongX ? (z0 + z1) / 2 : (z0 + z1) / 2 + 1);
   const rh = pitchedRoof(K, cx, cz, ex - cx, ez - cz, alongX ? w : d, (alongX ? d : w) / 2, H, col, wallCol);
-  if (frame) K.setFrame(...frame);
+  if (frame) K.setFrame(frame[0], frame[1], frame[2] || 1e-9);
   return rh;
 }
 
@@ -283,7 +298,7 @@ function batHouse(K, L) {
   K.reseed(L.seed);
   const R = K.R, rd = K.rng;
   // the frame: origin at the middle of the house's front, local z into the lot (see makeKit)
-  K.setFrame(L.fx, L.fz, Math.atan2(L.nx, L.nz));
+  K.setFrame(L.fx, L.fz, Math.atan2(L.nx, L.nz) || 1e-9);
   const w = L.w, d = L.hd, H = L.storeys === 2 ? R(6.4, 7.2) : R(3.3, 4.1), fh = L.storeys === 2 ? H / 2 : H;
   const wall = K.pick(HOUSE_WALLS).map((c) => c * R(0.82, 1.05) * 0.55);
   K.push(G.cube, TM.box(0, H / 2, d / 2, w, H, d), [...wall, 0.15], [MAT.building, 0, K.seed(), L.shop ? 0.75 : 0], [6, fh, R(2.4, 3.2), R(0.3, 0.45)]);
@@ -312,6 +327,7 @@ function batHouse(K, L) {
   K.clearFrame();
 }
 
+// (every K.setFrame here passes a non-zero angle: makeKit takes an angle of 0 as "no frame")
 // ---------- the town's own buildings: OSM's footprints ----------
 const BLD = {
   place_of_worship: { h: 9, wall: [0.55, 0.53, 0.48], style: 6, fh: 4.5 },
@@ -322,10 +338,13 @@ const BLD = {
   yes: { h: 9, wall: [0.45, 0.45, 0.46], style: 3, fh: 9 },
 };
 function batBuilding(K, b) {
-  const { G } = K, r = b.rect, spec = BLD[b.cls] || BLD.yes;
+  const { G } = K, spec = BLD[b.cls] || BLD.yes;
+  let r = b.rect;
   K.reseed(pcg(Math.round(r.x * 31 + r.z * 17)));
   if (b.name === 'Igreja Matriz') return matriz(K, b);
-  K.setFrame(r.x, r.z, r.yaw);
+  const [hx, hz] = clearHalf(batalha(), r, r.hx, r.hz);
+  r = { ...r, hx, hz };
+  K.setFrame(r.x, r.z, r.yaw || 1e-9);
   const big = r.hx > 18 && r.hz > 12;
   const h = b.name.startsWith('Ginásio') ? 11 : spec.h;
   K.push(G.cube, TM.box(0, h / 2, 0, r.hx * 2, h, r.hz * 2), [...spec.wall, 0.2], [MAT.building, 0, K.seed(), spec.shop || 0], [spec.style, spec.fh, 3, spec.style === 3 ? 0 : 0.45]);
@@ -348,10 +367,27 @@ function matriz(K, b) {
   const D = batalha(), sx = Math.sin(fr.yaw), sz = Math.cos(fr.yaw);
   const reach = (ax, az) => { let t = 0; while (t < 120) { t += 0.5; const [cl] = roadClear(D, fr.ox + ax * t, fr.oz + az * t, null); if (cl < 0.6) break; } return t - 0.5; };
   const front = reach(sx, sz), back = reach(-sx, -sz), side = Math.min(reach(sz, -sx), reach(-sz, sx));
-  K.setFrame(...F);
-  // the forecourt and its steps (local z to the front), inside the block
-  const steps = 5, sd = 0.9, fz1 = Math.max(L + 1.5, Math.min(L + 9, front - steps * sd - 0.3));
-  const fz0 = Math.max(-L - 3, -back + 0.3), fw = Math.max(W + 0.6, Math.min(W + 9, side - 0.3));
+  K.setFrame(F[0], F[1], F[2] || 1e-9);
+  // the forecourt and its steps (local z to the front), inside the block: the block's streets are
+  // not square to the church, so the whole outline (steps included) is checked against them and the
+  // forecourt made smaller until it keeps a metre off the asphalt everywhere
+  const steps = 5, sd = 0.9;
+  let fz1 = Math.max(L + 1.5, Math.min(L + 9, front - steps * sd - 0.3));
+  let fz0 = Math.max(-L - 3, -back + 0.3), fw = Math.max(W + 0.6, Math.min(W + 9, side - 0.3));
+  const clearOf = (x0, z0, x1, z1) => {
+    for (const [ax, az, bx, bz] of [[x0, z0, x1, z0], [x1, z0, x1, z1], [x1, z1, x0, z1], [x0, z1, x0, z0]]) {
+      const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 0.75);
+      for (let k = 0; k <= n; k++) {
+        const lx = ax + (bx - ax) * k / n, lz = az + (bz - az) * k / n;
+        if (roadClear(D, fr.ox + lx * sz + lz * sx, fr.oz - lx * sx + lz * sz, null)[0] < 1) return false;
+      }
+    }
+    return true;
+  };
+  for (let i = 0; i < 80 && !clearOf(-fw, fz0, fw, fz1 + steps * sd); i++) {
+    // shrink the side that can still give: the width, then the front, then the back
+    if (fw > W + 1.2) fw -= 0.5; else if (fz1 > L + 0.5) fz1 -= 0.5; else if (fz0 < -L - 0.2) fz0 += 0.5; else break;
+  }
   K.basic(G.cube, TM.box(0, P / 2, (fz0 + fz1) / 2, fw * 2, P, fz1 - fz0), pave);
   K.collider(-fw, 0, fz0, fw, P, fz1);
   for (let k = 0; k < steps; k++) {
@@ -371,7 +407,7 @@ function matriz(K, b) {
   K.collider(-W, P, nz0, W, P + H, nz1);
   K.footRect(-fw, fz0, fw, fz1);
   // the transept near the back, and the apse
-  const tz = -L + 9, tw = W + 6;
+  const tz = -L + 9, tw = Math.min(W + 6, fw - 0.5);
   K.push(G.cube, TM.box(0, P + H / 2, tz, tw * 2, H, 9), [...white, 0.1], [MAT.building, 0, K.seed(), 0], [6, H, 4.5, 0.18]);
   K.collider(-tw, P, tz - 4.5, tw, P + H, tz + 4.5);
   K.push(G.cube, TM.box(0, P + (H - 2) / 2, -L + 2.5, W * 1.4, H - 2, 5), [...white, 0.1], [MAT.building, 0, K.seed(), 0], [6, H, 4.5, 0]);
@@ -483,7 +519,7 @@ function batArea(K, a, own, lc) {
     // the field (striped grass), goals at the ends, and for the stadium its stands and floodlights
     const st = a.cls === 'stadium', fl = st ? { hx: 50, hz: 32 } : { hx: Math.max(r.hx - 4, 8), hz: Math.max(r.hz - 3, 5) };
     if (st) K.layPoly(a.poly.map((p) => [p.x, p.z]), 2);
-    K.setFrame(r.x, r.z, r.yaw);
+    K.setFrame(r.x, r.z, r.yaw || 1e-9);
     K.layRect(-fl.hx, -fl.hz, fl.hx, fl.hz, 9);
     if (!ownC) { K.clearFrame(); return; }
     for (const s of [-1, 1]) {
@@ -522,7 +558,7 @@ function batArea(K, a, own, lc) {
     }
     if (!K.full) return;
     const ip = inner(3);
-    K.setFrame(r.x, r.z, r.yaw);
+    K.setFrame(r.x, r.z, r.yaw || 1e-9);
     for (let x = -r.hx + 3; x < r.hx - 2; x += 2.6)
       for (let z = -r.hz + 3; z < r.hz - 2; z += 3.4) {
         const [wx, wz] = K.toWorld(x, z);
@@ -538,8 +574,8 @@ function batArea(K, a, own, lc) {
   // building in the middle (OSM gives the plot, not the building)
   K.layPoly(a.poly.map((p) => [p.x, p.z]), 8);
   if (!ownC) return;
-  K.setFrame(r.x, r.z, r.yaw);
-  const hx = Math.max(r.hx - 4, 3), hz = Math.max(r.hz - 4, 3);
+  K.setFrame(r.x, r.z, r.yaw || 1e-9);
+  const [hx, hz] = clearHalf(batalha(), r, Math.max(r.hx - 4, 3), Math.max(r.hz - 4, 3), 1.5);
   const spec = {
     school: { h: 4.4, wall: [0.5, 0.42, 0.3], style: 0, roof: 'tile' },
     hospital: { h: 7.2, wall: [0.62, 0.62, 0.6], style: 0, roof: 'tile' },
@@ -585,7 +621,7 @@ function batMast(K, x, z, h) {
 }
 
 // ---------- the roads ----------
-// q: (axis, width, lanes, mode): asphalt with a centre line (0), plain asphalt (2), dirt (4)
+// q: (axis, width, lanes, mode): asphalt with a centre line (0) on the main roads, plain asphalt (2), dirt (4)
 const SURF = { asphalt: [0, 0.03], dirt: [4, 0.01] };
 function batRoad(K, r, own, lc, D) {
   const { G } = K, [mode, top] = SURF[r.surf], w = r.w, piece = 48;
@@ -660,7 +696,13 @@ function genBatalha(cx, cz, lod, Q) {
   for (const r of roadsHere) batRoad(K, r, own, lc((X0 + X1) / 2, (Z0 + Z1) / 2), D);
   for (const a of D.areas) if (near(a.box)) batArea(K, a, own, LAMP);
   for (const b of D.blds) if (near(b.box) && own(b.rect.x, b.rect.z)) batBuilding(K, b);
-  for (const p of D.points) if (p.kind === 'mast' && own(p.x, p.z)) batMast(K, p.x, p.z, 38 + (Math.abs(p.x) % 9));
+  for (const p of D.points) {
+    if (p.kind !== 'mast' || !own(p.x, p.z)) continue;
+    // a mast OSM puts on the street stands just off it
+    let x = p.x, z = p.z;
+    for (let i = 0; i < 20; i++) { const [cl, s] = roadClear(D, x, z, null); if (cl > 3 || !s) break; const t = clamp((x - s.ax) * s.ux + (z - s.az) * s.uz, 0, s.len), qx = x - (s.ax + s.ux * t), qz = z - (s.az + s.uz * t), l = Math.hypot(qx, qz) || 1; x += (qx / l) * 1; z += (qz / l) * 1; }
+    batMast(K, x, z, 38 + (Math.abs(p.x) % 9));
+  }
   // the creeks: a dark wet bed with the bush thick along it
   if (full) for (const s of D.streamSegs) {
     if (Math.max(s.ax, s.bx) < X0 - 10 || Math.min(s.ax, s.bx) > X1 + 10 || Math.max(s.az, s.bz) < Z0 - 10 || Math.min(s.az, s.bz) > Z1 + 10) continue;
