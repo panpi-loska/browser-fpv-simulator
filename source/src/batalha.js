@@ -4,7 +4,7 @@
 // OpenStreetMap (batalha-data.js); what OSM does not have, the houses, the trees in the yards and the
 // cerrado round the town, is made here the way the town looks from above: one-storey houses side by
 // side along every street, their fronts on the pavement and orange tiled roofs, a yard behind with a
-// mango tree, cobbled streets in town and red dirt ones on the edges, the bush all around.
+// mango tree, asphalt streets in town and red dirt ones on the edges, the bush all around.
 // genBatalha makes a 256 m piece in the same form as genChunk (gen.js), so the streamer, the
 // renderer and libfpv's collision take it as they take Halvard Bay. The ground is flat.
 // ---------------------------------------------------------------------------
@@ -37,22 +37,21 @@ function batalha() {
       flush();
       continue;
     }
-    const poly = pts.map(([x, z]) => ({ x, z }));
-    if (polyArea(poly) < 0) poly.reverse();
+    const poly = convexHull(pts.map(([x, z]) => ({ x, z })));
     const item = { t, cls, name, levels: +levels || 0, poly, box: polyBox(poly), c: polyCentroid(poly), rect: fitRect(poly) };
     (t === 'b' ? blds : areas).push(item);
   }
   // each road: how wide, what it is made of, and its straight pieces
   roads.forEach((r, ri) => {
     const mid = r.pts[r.pts.length >> 1], rc = Math.hypot(mid[0] - BAT.centre[0], mid[1] - BAT.centre[1]);
-    let w = 7, surf = 'cobble';
+    let w = 7, surf = 'asphalt';
     switch (r.cls) {
       case 'primary': case 'primary_link': w = r.cls === 'primary' ? 10 : 7; surf = 'asphalt'; break;
       case 'secondary': w = 8.5; surf = 'asphalt'; break;
-      case 'tertiary': w = 7; surf = rc < 900 ? 'cobble' : 'dirt'; break;
-      case 'unclassified': w = 6; surf = rc < 1100 ? 'cobble' : 'dirt'; break;
+      case 'tertiary': w = 7; surf = rc < 900 ? 'asphalt' : 'dirt'; break;
+      case 'unclassified': w = 6; surf = rc < 1100 ? 'asphalt' : 'dirt'; break;
       case 'track': case 'service': w = 4; surf = 'dirt'; break;
-      default: w = 7; surf = rc < 1300 + 500 * ih(ri, 7) ? 'cobble' : 'dirt';
+      default: w = 7; surf = 'asphalt';
     }
     if (r.surface === 'unpaved') surf = 'dirt';
     if (r.surface === 'asphalt') surf = 'asphalt';
@@ -99,12 +98,21 @@ function batalha() {
       while (t < 220) { t += 0.75; const [cl] = roadClear(batCache, ox + dx * t, oz + dz * t, null); if (cl < 1.0) break; }
       poly.push({ x: ox + dx * (t - 0.5), z: oz + dz * (t - 0.5) });
     }
-    if (polyArea(poly) < 0) poly.reverse();
+    poly.splice(0, poly.length, ...convexHull(poly));
     areas.push({ t: 'a', cls: 'adro', name: 'Adro da Matriz', levels: 0, poly, box: polyBox(poly), c: polyCentroid(poly), rect: fitRect(poly) });
   }
   return batCache;
 }
 
+// the convex hull of some points (the polygon helpers in layout.js take convex polygons), anticlockwise
+function convexHull(pts) {
+  const P = [...pts].sort((a, b) => a.x - b.x || a.z - b.z), cr = (o, a, b) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
+  const lo = [], hi = [];
+  for (const p of P) { while (lo.length > 1 && cr(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+  for (const p of P.reverse()) { while (hi.length > 1 && cr(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+  const h = lo.slice(0, -1).concat(hi.slice(0, -1));
+  return polyArea(h) < 0 ? h.reverse() : h;
+}
 // the oriented rectangle round a polygon, lined up with its longest edge: centre, half sizes, yaw (TM.yaw)
 function fitRect(poly) {
   let best = 0, ux = 1, uz = 0;
@@ -336,15 +344,20 @@ function matriz(K, b) {
   const { G } = K, r = b.rect, fr = churchFrame(r), F = [fr.ox, fr.oz, fr.yaw];
   const L = Math.max(r.hx, r.hz), W = Math.min(r.hx, r.hz) * 0.72, white = [0.66, 0.65, 0.62], trim = [0.36, 0.4, 0.46];
   const P = 1.1, H = 10.5, pave = [0.3, 0.22, 0.18];
+  // how far the block reaches from the church's centre, along and across it, to the kerb
+  const D = batalha(), sx = Math.sin(fr.yaw), sz = Math.cos(fr.yaw);
+  const reach = (ax, az) => { let t = 0; while (t < 120) { t += 0.5; const [cl] = roadClear(D, fr.ox + ax * t, fr.oz + az * t, null); if (cl < 0.6) break; } return t - 0.5; };
+  const front = reach(sx, sz), back = reach(-sx, -sz), side = Math.min(reach(sz, -sx), reach(-sz, sx));
   K.setFrame(...F);
-  // the forecourt and its steps (local z to the front)
-  const fz0 = -L - 3, fz1 = L + 9, fw = W + 9;
+  // the forecourt and its steps (local z to the front), inside the block
+  const steps = 5, sd = 0.9, fz1 = Math.max(L + 1.5, Math.min(L + 9, front - steps * sd - 0.3));
+  const fz0 = Math.max(-L - 3, -back + 0.3), fw = Math.max(W + 0.6, Math.min(W + 9, side - 0.3));
   K.basic(G.cube, TM.box(0, P / 2, (fz0 + fz1) / 2, fw * 2, P, fz1 - fz0), pave);
   K.collider(-fw, 0, fz0, fw, P, fz1);
-  for (let k = 0; k < 5; k++) {
-    const y = P - (k + 1) * (P / 6), z = fz1 + 0.45 + k * 0.9;
-    K.basic(G.cube, TM.box(0, y / 2, z, fw * 2 + 2 + k * 2, y, 0.9), [0.5, 0.48, 0.45]);
-    K.collider(-fw - 1 - k, 0, z - 0.45, fw + 1 + k, y, z + 0.45);
+  for (let k = 0; k < steps; k++) {
+    const y = P - (k + 1) * (P / (steps + 1)), z = fz1 + sd / 2 + k * sd;
+    K.basic(G.cube, TM.box(0, y / 2, z, fw * 2, y, sd), [0.5, 0.48, 0.45]);
+    K.collider(-fw, 0, z - sd / 2, fw, y, z + sd / 2);
     K.basic(G.cube, TM.box(0, y + 0.005, z, 3.5, 0.02, 0.9), [0.42, 0.14, 0.12]);
   }
   K.basic(G.cube, TM.box(0, P + 0.005, (L + fz1) / 2, 3.5, 0.02, fz1 - L), [0.42, 0.14, 0.12]);
@@ -572,8 +585,8 @@ function batMast(K, x, z, h) {
 }
 
 // ---------- the roads ----------
-// q: (axis, width, lanes, mode): asphalt with a centre line (0), plain asphalt (2), cobbles (3), dirt (4)
-const SURF = { asphalt: [0, 0.03], cobble: [3, 0.02], dirt: [4, 0.01] };
+// q: (axis, width, lanes, mode): asphalt with a centre line (0), plain asphalt (2), dirt (4)
+const SURF = { asphalt: [0, 0.03], dirt: [4, 0.01] };
 function batRoad(K, r, own, lc, D) {
   const { G } = K, [mode, top] = SURF[r.surf], w = r.w, piece = 48;
   for (let i = 0; i + 1 < r.pts.length; i++) {
@@ -583,14 +596,14 @@ function batRoad(K, r, own, lc, D) {
     for (let k = 0; k < n; k++) {
       const s0 = (k * len) / n, s1 = ((k + 1) * len) / n, mx = ax + ux * (s0 + s1) / 2, mz = az + uz * (s0 + s1) / 2;
       if (!own(mx, mz)) continue;
-      const lanes = mode === 0 && w >= 7 ? 1 : 0;
+      const lanes = mode === 0 && (r.cls === 'primary' || r.cls === 'secondary') && w >= 7 ? 1 : 0;
       K.G.cube.push(TM.yaw(mx, ROADY - 0.15 + top, mz, s1 - s0 + 0.05, 0.3, w, yaw), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, w, lanes, lanes ? 0 : mode === 0 ? 2 : mode]);
     }
     // round the bends and the ends, so the next piece joins without a notch
     if (own(bx, bz)) K.G.cyl.push(TM.box(bx, ROADY - 0.155 + top, bz, w, 0.3, w), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, w, 0, mode === 0 ? 2 : mode]);
     if (i === 0 && own(ax, az)) K.G.cyl.push(TM.box(ax, ROADY - 0.155 + top, az, w, 0.3, w), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, w, 0, mode === 0 ? 2 : mode]);
     // lamps on concrete poles every 34 m, on one side then the other, in town
-    if (!r.town || r.surf === 'dirt' && batDensity(ax, az) < 0.75) continue;
+    if (!r.town || (r.surf === 'dirt' && batDensity(ax, az) < 0.75)) continue;
     for (let s = 10 + (r.id % 7) * 3; s < len - 4; s += 34) {
       const side = Math.floor(s / 34) % 2 ? 1 : -1, nx = -uz * side, nz = ux * side;
       const x = ax + ux * s + nx * (w / 2 + 0.6), z = az + uz * s + nz * (w / 2 + 0.6);

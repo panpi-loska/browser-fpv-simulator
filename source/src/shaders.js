@@ -592,20 +592,13 @@ fn shadeRoad(I: Inst, w: vec3f, n: vec3f, lp: vec3f, fp: vec2f, V: vec3f) -> vec
   let L = lightAt(w);
   if (n.y < 0.5) { return vec3f(0.12, 0.115, 0.11) * (ambientL(n, w.y) + sunL(n) + streetL(w, n)); }
   var alb = vec3f(0.032, 0.033, 0.037) * (0.75 + 0.5 * fbm(w.xz * 0.12));
+  if (batalhaMap()) { alb = vec3f(0.06, 0.058, 0.056) * (0.75 + 0.5 * fbm(w.xz * 0.12)) * (0.85 + 0.3 * vnoise(w.xz * 0.6)); }
   var mark = 0.0; var yel = 0.0;
   let size = instSize(I);
-  if (I.q.w > 2.5) {
-    var dirt = I.q.w > 3.5;
-    if (!dirt) {   // cobbles: grey stones in rows, the joints dark (fading out with distance)
-      let g = w.xz * vec2f(2.4, 3.2); let cell = floor(g); let f = fract(g + vec2f(0.5 * (cell.y - 2.0 * floor(cell.y / 2.0)), 0.0));
-      let e = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
-      let fade = 1.0 - smoothstep(0.05, 0.25, fwidth(g.x));
-      alb = vec3f(0.085, 0.08, 0.072) * (0.7 + 0.5 * fbm(w.xz * 0.15)) * mix(1.0, mix(0.55, 1.0, smoothstep(0.02, 0.12, e)) * (0.85 + 0.3 * h21(cell)), fade);
-    } else {       // red dirt, with two worn wheel tracks along it
-      alb = vec3f(0.17, 0.085, 0.048) * (0.72 + 0.56 * fbm(w.xz * 0.3));
-    }
+  if (I.q.w > 3.5) {   // a dirt road (Batalha): red earth
+    alb = vec3f(0.17, 0.085, 0.048) * (0.72 + 0.56 * fbm(w.xz * 0.3));
     var c = alb * (ambientL(n, w.y) + sunL(n) + L.rgb * 4.0) * mix(0.5, 1.0, L.a);
-    let wet = u.p2.y * select(1.0, 0.5, dirt);
+    let wet = u.p2.y * 0.5;
     let fr = fresnel(clamp(-dot(V, n), 0.0, 1.0));
     return c * (1.0 - wet * 0.3) + reflSample(fp, V, n, w, 1.0 + 3.0 * wet) * min((0.1 + 0.9 * fr) * wet * 0.5, 0.5);
   }
@@ -822,7 +815,7 @@ fn suburbLights(w: vec3f) -> vec3f {
     let g = fract(w.xz / 2.0); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
     alb = vec3f(0.11, 0.1, 0.095) * mix(0.7, 1.0, smoothstep(0.0, 0.05, e));
   }
-  else if (ty == 7u) { alb = vec3f(0.02, 0.022, 0.02) * (0.6 + 0.8 * fbm(w.xz * 0.01)); }
+  else if (ty == 7u && !batalhaMap()) { alb = vec3f(0.02, 0.022, 0.02) * (0.6 + 0.8 * fbm(w.xz * 0.01)); }
   else if (ty == 8u) {   // paving: the pavements round a block
     let g = fract(w.xz / 1.5); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
     let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 1.5);
