@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // main.js: startup, the time of day and the weather, the menu, the launch spots, the views
-// (FPV, line of sight), and the loop: libfpv flies the quad, the renderer draws the city
+// (always through the goggles), and the loop: libfpv flies the quad, the renderer draws the city
 // from its camera, the goggles draw it as an FPV feed with the Betaflight OSD.
 // ---------------------------------------------------------------------------
 
@@ -174,10 +174,7 @@ $('spr').onclick = () => goSpot(spot + 1);
 core.setAction(1, 'Next launch spot');
 core.setAction(2, 'Back to the launch spot');
 
-// ---- views: 0 the goggles, 2 line of sight from the pilot (libfpv's numbers; its chase view, 1, is not used) ----
-const VIEWS = { 0: 'FPV', 2: 'Line of sight' };
-let viewMode = 0;
-function nextView() { viewMode = viewMode === 0 ? 2 : 0; core.setView(viewMode); toast(VIEWS[viewMode]); }
+// ---- the view: always the goggles (libfpv's view 0; its chase and line-of-sight views are not used) ----
 core.setView(0);
 const view = { pos: [0, 200, 900], yaw: 0, pitch: -0.2, fov: 1.05, basis: null, near: 0.3 };
 // in the menu the view circles the chosen launch spot
@@ -324,7 +321,6 @@ tbtn('tarm', () => {
   if (sticks.arm) setTimeout(() => { if (sticks.arm && core.frame && !core.frame.armed) toast(sticks.thr > -0.9 ? 'Throttle down to arm' : core.armingText() || 'Not armed'); }, 400);
 });
 tbtn('tang', () => { sticks.angle = !sticks.angle; $('tang').classList.toggle('on', sticks.angle); $('tang').textContent = sticks.angle ? 'Angle' : 'Acro'; toast(sticks.angle ? 'Angle mode' : 'Acro mode'); });
-tbtn('tvw', nextView);
 tbtn('trs', () => { sticks.arm = false; $('tarm').classList.remove('on'); goSpot(spot); toast('Respawned'); });
 function sendSticks() {
   if (!touch || !sticks.used || !playing || core.overlayIsOpen) return;
@@ -373,7 +369,6 @@ addEventListener('keydown', (e) => {
   const n = /^Digit([1-9])$/.exec(e.code);
   if (n && +n[1] <= spots.length) goSpot(+n[1] - 1, true);
   if (e.code === 'KeyR') { goSpot(spot); toast('Respawned'); }
-  if (e.code === 'KeyV') nextView();
   if (e.code === 'KeyM') { setSound(!soundOn); toast(soundOn ? 'Sound on' : 'Sound off'); }
   if (e.code === 'KeyH') { showStats = !showStats; $('i').hidden = !showStats; }
   if (e.code === 'KeyN') { setTime(TIME_ORDER[(TIME_ORDER.indexOf(timeKey) + 1) % 3]); toast(TIMES[timeKey].label); }
@@ -506,10 +501,10 @@ function frame(now) {
     sendSticks();
     f = core.tick(dt);
     if (f) {
-      // unlimited range: the pilot keeps a few metres from the quad (except in the line-of-sight view,
+      // unlimited range: the pilot keeps a few metres from the quad
       // where the pilot is the camera)
-      if (unlimited) core.setPilot(viewMode === 2 ? pilotHome : [f.pos[0], f.pos[1] + 3, f.pos[2]]);
-      cameraView(viewMode === 0 ? f.camera : f.los);
+      if (unlimited) core.setPilot([f.pos[0], f.pos[1] + 3, f.pos[2]]);
+      cameraView(f.camera);
       // what it hit, and how hard (hardest: the speed of the hit, m/s); into the river, a splash, once
       const wet = f.pos[1] < RIVER.level + 0.5 && inRiver(f.pos[0], f.pos[2]);
       if (wet && !wasWet) audio.playSplash(clamp(Math.hypot(...f.vel) / 14, 0.15, 1));
@@ -518,7 +513,7 @@ function frame(now) {
       if (f.crashed && !wasCrashed) toast(f.propHit ? 'Props broken · R to respawn' : 'Crashed · R to respawn');
       wasCrashed = f.crashed;
       for (let i = 0; i < 4; i++) propAngle[i] += ((f.motors[i].rpm * f.motors[i].dir) / 60) * 2 * Math.PI * dt;
-      updateDroneModel(R, droneModel, f, viewMode !== 0, propAngle);
+      updateDroneModel(R, droneModel, f, false, propAngle);
     }
     for (let a; (a = core.pollAction());) {
       if (a === 1) goSpot(spot + 1, true);
@@ -529,9 +524,9 @@ function frame(now) {
   snow(dt);
   stepEnv(dt);
   R.render(view, env, t);
-  const g = goggles.drawMain(core, R.ldr, f, entered && viewMode === 0);
+  const g = goggles.drawMain(core, R.ldr, f, entered);
   // the OSD over the picture (digital, or analog effects off), and the F8 overlay
-  const showOsd = entered && viewMode === 0 && f && !g.osdIn && !f.osdDisabled;
+  const showOsd = entered && f && !g.osdIn && !f.osdDisabled;
   const osd = showOsd ? core.osd(innerWidth, innerHeight, f.video.osdStyle) : null;
   if (core.overlayIsOpen && !overlayAsked) core.overlayOpen(false);
   let overlay = core.overlay(dt);

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// quad.js: the quad as seen from the line-of-sight view. A handful of instances
+// quad.js: the quad's model (kept hidden: the view is always the goggles). A handful of instances
 // (frame, arms, motors, props, battery, camera, LEDs) kept in the renderer's instance buffer and
 // moved every frame to libfpv's pose. Hidden in the FPV view, where the camera sits inside it.
 // ---------------------------------------------------------------------------
