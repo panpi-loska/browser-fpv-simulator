@@ -44,18 +44,21 @@ function batalha() {
   // each road: how wide, what it is made of, and its straight pieces
   roads.forEach((r, ri) => {
     const mid = r.pts[r.pts.length >> 1], rc = Math.hypot(mid[0] - BAT.centre[0], mid[1] - BAT.centre[1]);
-    let w = 7, surf = 'asphalt';
+    // the streets of the town are asphalt, with a cement pavement each side; only the tracks and
+    // the roads out into the bush are red earth
+    const inTown = rc < 1600;
+    let w = 8, surf = 'asphalt';
     switch (r.cls) {
-      case 'primary': case 'primary_link': w = r.cls === 'primary' ? 10 : 7; surf = 'asphalt'; break;
-      case 'secondary': w = 8.5; surf = 'asphalt'; break;
-      case 'tertiary': w = 7; surf = rc < 900 ? 'asphalt' : 'dirt'; break;
-      case 'unclassified': w = 6; surf = rc < 1100 ? 'asphalt' : 'dirt'; break;
+      case 'primary': case 'primary_link': w = r.cls === 'primary' ? 10 : 7.5; break;
+      case 'secondary': w = 9; break;
+      case 'tertiary': w = inTown ? 8.5 : 7; surf = inTown ? 'asphalt' : 'dirt'; break;
+      case 'unclassified': w = inTown ? 7.5 : 6; surf = inTown ? 'asphalt' : 'dirt'; break;
       case 'track': case 'service': w = 4; surf = 'dirt'; break;
-      default: w = 7; surf = 'asphalt';
+      default: w = inTown ? 8 : 7;
     }
-    if (r.surface === 'unpaved') surf = 'dirt';
+    if (r.surface === 'unpaved' && (!inTown || r.cls === 'track' || r.cls === 'service' || r.cls === 'primary_link')) surf = 'dirt';
     if (r.surface === 'asphalt') surf = 'asphalt';
-    if (r.oneway && r.cls === 'primary') w = 7;
+    if (r.oneway && r.cls === 'primary') w = 7.5;
     r.w = w; r.surf = surf; r.id = ri;
     r.town = r.cls !== 'track' && r.cls !== 'service';
     for (let i = 0; i + 1 < r.pts.length; i++) {
@@ -634,6 +637,11 @@ function batRoad(K, r, own, lc, D) {
       if (!own(mx, mz)) continue;
       const lanes = mode === 0 && (r.cls === 'primary' || r.cls === 'secondary') && w >= 7 ? 1 : 0;
       K.G.cube.push(TM.yaw(mx, ROADY - 0.15 + top, mz, s1 - s0 + 0.05, 0.3, w, yaw), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, w, lanes, lanes ? 0 : mode === 0 ? 2 : mode]);
+    }
+    // the pavement each side of a town street: cement (ground 11), the road box lies on top of it
+    if (K.full && mode !== 4) {
+      const p = w / 2 + 1.7, nx = -uz * p, nz = ux * p, ex = ux * 0.8, ez = uz * 0.8;
+      K.layPoly([[ax - nx - ex, az - nz - ez], [bx - nx + ex, bz - nz + ez], [bx + nx + ex, bz + nz + ez], [ax + nx - ex, az + nz - ez]], 11);
     }
     // round the bends and the ends, so the next piece joins without a notch
     if (own(bx, bz)) K.G.cyl.push(TM.box(bx, ROADY - 0.155 + top, bz, w, 0.3, w), [0, 0, 0, 0], [MAT.road, 0, 0, 0], [0, w, 0, mode === 0 ? 2 : mode]);

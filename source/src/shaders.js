@@ -816,10 +816,16 @@ fn suburbLights(w: vec3f) -> vec3f {
     alb = vec3f(0.11, 0.1, 0.095) * mix(0.7, 1.0, smoothstep(0.0, 0.05, e));
   }
   else if (ty == 7u && !batalhaMap()) { alb = vec3f(0.02, 0.022, 0.02) * (0.6 + 0.8 * fbm(w.xz * 0.01)); }
-  else if (ty == 8u && batalhaMap()) {   // Batalha's squares and forecourt: small warm clay-coloured tiles
-    let g = fract(w.xz / 0.8); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
-    let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 0.8);
-    alb = vec3f(0.2, 0.145, 0.115) * (0.85 + 0.3 * h21(floor(w.xz / 0.8))) * (0.9 + 0.2 * fbm(w.xz * 0.05)) * mix(1.0, mix(0.72, 1.0, smoothstep(0.0, 0.06, e)), seams);
+  else if (ty == 8u && batalhaMap()) {   // Batalha's squares and forecourt: pale cement flagstones, a warmer one here and there
+    let g = fract(w.xz / 1.2); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
+    let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 1.2);
+    let h = h21(floor(w.xz / 1.2));
+    alb = mix(vec3f(0.27, 0.255, 0.235), vec3f(0.3, 0.22, 0.17), step(0.86, h)) * (0.9 + 0.15 * h) * (0.88 + 0.2 * fbm(w.xz * 0.05)) * mix(1.0, mix(0.7, 1.0, smoothstep(0.0, 0.05, e)), seams);
+  }
+  else if (ty == 11u) {   // a town pavement: grey cement, a joint every metre and a half, worn in patches
+    let g = fract(w.xz / 1.5); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
+    let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 1.5);
+    alb = vec3f(0.2, 0.192, 0.18) * (0.8 + 0.35 * fbm(w.xz * 0.3)) * mix(1.0, mix(0.65, 1.0, smoothstep(0.0, 0.04, e)), seams);
   }
   else if (ty == 8u) {   // paving: the pavements round a block
     let g = fract(w.xz / 1.5); let e = min(min(g.x, 1.0 - g.x), min(g.y, 1.0 - g.y));
