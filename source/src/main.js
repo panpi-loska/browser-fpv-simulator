@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // main.js: startup, the time of day and the weather, the menu, the launch spots, the views
-// (FPV, chase, line of sight), and the loop: libfpv flies the quad, the renderer draws the city
+// (FPV, line of sight), and the loop: libfpv flies the quad, the renderer draws the city
 // from its camera, the goggles draw it as an FPV feed with the Betaflight OSD.
 // ---------------------------------------------------------------------------
 
@@ -174,9 +174,10 @@ $('spr').onclick = () => goSpot(spot + 1);
 core.setAction(1, 'Next launch spot');
 core.setAction(2, 'Back to the launch spot');
 
-// ---- views: 0 the goggles, 1 chase, 2 line of sight from the pilot ----
-const VIEWS = ['FPV', 'Chase', 'Line of sight'];
+// ---- views: 0 the goggles, 2 line of sight from the pilot (libfpv's numbers; its chase view, 1, is not used) ----
+const VIEWS = { 0: 'FPV', 2: 'Line of sight' };
 let viewMode = 0;
+function nextView() { viewMode = viewMode === 0 ? 2 : 0; core.setView(viewMode); toast(VIEWS[viewMode]); }
 core.setView(0);
 const view = { pos: [0, 200, 900], yaw: 0, pitch: -0.2, fov: 1.05, basis: null, near: 0.3 };
 // in the menu the view circles the chosen launch spot
@@ -203,7 +204,7 @@ function toast(msg) {
 function updateMenuButtons() {
   [...$('t').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', TIME_ORDER[i] === timeKey));
   [...$('r').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === raining));
-  [...$('sg').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === unlimited));
+  [...$('sg').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 0) === unlimited));
   [...$('so').querySelectorAll('button')].forEach((b, i) => b.classList.toggle('on', (i === 1) === soundOn));
   $('gs').classList.toggle('off', !soundOn);
   // a volume as the OSD would draw it: a bar of five cells
@@ -213,9 +214,9 @@ function updateMenuButtons() {
 }
 function setTime(k) { timeKey = k; const p = loadPrefs(); p.time = k; savePrefs(p); updateMenuButtons(); }
 function setRain(on) { raining = on; applyWind(); const p = loadPrefs(); p.rain = on; savePrefs(p); updateMenuButtons(); }
-// video range: real (the link fades with distance and buildings, from where the pilot stands) or
-// unlimited (the pilot walks with the quad, so the picture stays clean anywhere)
-let unlimited = prefs.range === 'unlimited';
+// video range: unlimited (the default: the pilot walks with the quad, so the picture stays clean
+// anywhere) or real (the link fades with distance and buildings, from where the pilot stands)
+let unlimited = prefs.range !== 'real';
 function setRange(on) { unlimited = on; if (!on) core.setPilot(pilotHome); const p = loadPrefs(); p.range = on ? 'unlimited' : 'real'; savePrefs(p); updateMenuButtons(); }
 // the FPV camera's angle above the frame: libfpv's own setting, so it matches F8 > Camera & sound
 function setTilt(d) { core.uptilt = clamp(Math.round(d / 5) * 5, 0, 70); updateTilt(); }
@@ -250,7 +251,7 @@ function setVolume(which, v) {
 function setSound(on) { soundOn = on; audio.setEnabled(on); const p = loadPrefs(); p.sound = on; savePrefs(p); updateMenuButtons(); }
 [...$('t').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setTime(TIME_ORDER[i]); });
 [...$('r').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setRain(i === 1); });
-[...$('sg').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setRange(i === 1); });
+[...$('sg').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setRange(i === 0); });
 [...$('so').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => { setSound(i === 1); if (i === 1) audio.start(); }; });
 for (const [id, which] of [['vm', 'motors'], ['va', 'ambient']])
   [...$(id).querySelectorAll('button')].forEach((b, i) => { b.onclick = () => { setVolume(which, audio.vol[which] + (i ? 0.2 : -0.2)); audio.start(); }; });
@@ -323,7 +324,7 @@ tbtn('tarm', () => {
   if (sticks.arm) setTimeout(() => { if (sticks.arm && core.frame && !core.frame.armed) toast(sticks.thr > -0.9 ? 'Throttle down to arm' : core.armingText() || 'Not armed'); }, 400);
 });
 tbtn('tang', () => { sticks.angle = !sticks.angle; $('tang').classList.toggle('on', sticks.angle); $('tang').textContent = sticks.angle ? 'Angle' : 'Acro'; toast(sticks.angle ? 'Angle mode' : 'Acro mode'); });
-tbtn('tvw', () => { viewMode = (viewMode + 1) % 3; core.setView(viewMode); toast(VIEWS[viewMode]); });
+tbtn('tvw', nextView);
 tbtn('trs', () => { sticks.arm = false; $('tarm').classList.remove('on'); goSpot(spot); toast('Respawned'); });
 function sendSticks() {
   if (!touch || !sticks.used || !playing || core.overlayIsOpen) return;
@@ -372,7 +373,7 @@ addEventListener('keydown', (e) => {
   const n = /^Digit([1-9])$/.exec(e.code);
   if (n && +n[1] <= spots.length) goSpot(+n[1] - 1, true);
   if (e.code === 'KeyR') { goSpot(spot); toast('Respawned'); }
-  if (e.code === 'KeyV') { viewMode = (viewMode + 1) % 3; core.setView(viewMode); toast(VIEWS[viewMode]); }
+  if (e.code === 'KeyV') nextView();
   if (e.code === 'KeyM') { setSound(!soundOn); toast(soundOn ? 'Sound on' : 'Sound off'); }
   if (e.code === 'KeyH') { showStats = !showStats; $('i').hidden = !showStats; }
   if (e.code === 'KeyN') { setTime(TIME_ORDER[(TIME_ORDER.indexOf(timeKey) + 1) % 3]); toast(TIMES[timeKey].label); }
@@ -508,7 +509,7 @@ function frame(now) {
       // unlimited range: the pilot keeps a few metres from the quad (except in the line-of-sight view,
       // where the pilot is the camera)
       if (unlimited) core.setPilot(viewMode === 2 ? pilotHome : [f.pos[0], f.pos[1] + 3, f.pos[2]]);
-      cameraView(viewMode === 0 ? f.camera : viewMode === 1 ? f.chase : f.los);
+      cameraView(viewMode === 0 ? f.camera : f.los);
       // what it hit, and how hard (hardest: the speed of the hit, m/s); into the river, a splash, once
       const wet = f.pos[1] < RIVER.level + 0.5 && inRiver(f.pos[0], f.pos[2]);
       if (wet && !wasWet) audio.playSplash(clamp(Math.hypot(...f.vel) / 14, 0.15, 1));

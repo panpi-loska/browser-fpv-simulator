@@ -38,7 +38,7 @@ with **WebGPU** (Chrome or Edge on desktop).
 - Analog video, with the snow and rolling lines of a real analog link, and menus in the look of Betaflight's
   analog OSD, in its own font. Video breakup at long range can be turned off.
 - Your own pilot name on the OSD, set in the menu.
-- Adjustable camera angle, plus chase and line-of-sight views.
+- Adjustable camera angle, and a line-of-sight view from where the pilot stands.
 - Radio setup wizard for RadioMaster Pocket and any EdgeTX / OpenTX / ELRS radio over USB.
 
 ## How to run
@@ -75,11 +75,11 @@ Android Chrome with WebGPU works best; the game goes full screen when you press 
 | Pitch / roll | arrow keys |
 | Arm / disarm | `Enter` |
 | Turtle mode | `T` |
-| Change view | `V` |
+| Goggles / line of sight | `V` |
 | Respawn | `R` |
 | Launch spot | `1`–`9` |
 | Camera angle | `[` / `]` |
-| Video range real / unlimited | `L` |
+| Video range unlimited / real | `L` |
 | Time of day / rain | `N` / `U` |
 | Sound / stats | `M` / `H` |
 | Settings | `F8` |
