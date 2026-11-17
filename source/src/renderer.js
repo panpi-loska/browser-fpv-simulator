@@ -267,11 +267,11 @@ async function createRenderer(canvas, Q, base, onLost) {
     d.set([...env.skyTop, env.lit], 36);
     d.set([...env.skyHor, env.fog], 40);
     d.set([...env.sunDir, env.stars], 44);
-    d.set([...env.sunCol, 0], 48);
+    d.set([...env.sunCol, env.lamps ?? 1], 48);
     d.set([...env.amb, env.rain], 52);
     d.set([...env.glow, RIVER.level], 56);
     d.set(p1, 60); d.set(p2, 64);
-    d.set([...right, 0], 68); d.set([...up, 0], 72);
+    d.set([...right, MAP === 'batalha' ? 1 : 0], 68); d.set([...up, 0], 72);
   }
 
   const count = (k) => reg[k].fixed + reg[k].used;

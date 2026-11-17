@@ -1314,6 +1314,7 @@ function trainLoop(K, L, own, X0, Z0, X1, Z1) {
 // ---------- what isn't in any piece: the blimp over Halvard Bay (and, added by quad.js, the quad) ----------
 function baseGroups(Q) {
   const K = makeKit(Q, true), G = K.G;
+  if (MAP !== 'halvard') return G;
   K.reseed(77);
   const q = [100, -250, 700, 7], ph = 1.3;
   const env = (m, col) => G.sphere.push(m, [...col, 0], [MAT.basic, ANIM.blimp, K.seed(), ph], q);
@@ -1329,6 +1330,7 @@ function baseGroups(Q) {
 
 // ---------- one piece ----------
 function genChunk(cx, cz, lod, Q) {
+  if (MAP === 'batalha') return genBatalha(cx, cz, lod, Q);
   const X0 = cx * CHUNK, Z0 = cz * CHUNK, X1 = X0 + CHUNK, Z1 = Z0 + CHUNK, full = lod > 0;
   const own = (x, z) => x >= X0 && x < X1 && z >= Z0 && z < Z1;
   const K = makeKit(Q, full), G = K.G;
@@ -1579,6 +1581,7 @@ function chunkRaster(out) {
 if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope) {
   self.onmessage = (e) => {
     const { id, cx, cz, lod, Q } = e.data;
+    MAP = e.data.map || 'halvard';
     const out = genChunk(cx, cz, lod, Q);
     if (lod) chunkRaster(out);
     const tr = [out.boxes.buffer, ...GROUPS.map((g) => out.groups[g].buffer)];

@@ -10,6 +10,9 @@ with **WebGPU** (Chrome or Edge on desktop).
 
 ## Features
 
+- Two maps: **Halvard Bay**, an endless city at dusk, and **Batalha (Piauí, Brazil)**, a real country town at its real size,
+  its streets, squares, church and stadium from OpenStreetMap, one-storey houses with tiled roofs and the cerrado around it.
+- Dusk, night, dawn or day (by day the lights are off).
 - Real Betaflight (2025.12) running at 1 kHz, with its CLI. Paste your quad's `diff all` to fly your own tune.
 - Several quads: 5" freestyle and racing, 7" long range, whoops and 3"–4" builds.
 - An endless city: it is generated around you as you fly, so it never runs out, and every place is always the same.

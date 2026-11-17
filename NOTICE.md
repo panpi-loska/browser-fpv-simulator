@@ -18,6 +18,8 @@ because it includes libfpv, Betaflight and SimITL, which are GPL-3.0. The source
 | [Afterglow City](https://github.com/J-o-h-n-M/afterglow-city) by John | the WebGPU renderer, shaders, the city generator (Halvard Bay), sound synthesis and build script | MIT (notice below) | this repository, `source/src` |
 | [Abyssal Garden](https://github.com/Noniv/abyssal-garden) by Maksymilian Dendura | the single-file approach, build script and menu layout Afterglow City adapted | MIT (notice below) | |
 
+| [OpenStreetMap](https://www.openstreetmap.org/copyright) data for Batalha, Piauí (exported 2026-11-17) | the streets, squares, church, schools, market, stadium, cemeteries and creeks of the Batalha map (`source/src/batalha-data.js`) | ODbL 1.0, © OpenStreetMap contributors | openstreetmap.org |
+
 `source/src/goggles.js` is a WebGPU port of libfpv's `docs/renderers/fpv_video_gl3.h` and `fpv_render_gl3.h` (GPL-3.0-or-later).
 
 ## MIT notices of the upstream projects

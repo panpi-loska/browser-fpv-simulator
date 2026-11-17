@@ -20,6 +20,8 @@ let level = pickLevel();
 }
 const Q = LEVELS[level];
 const prefs = loadPrefs();
+// the map (city.js MAP): Halvard Bay, or Batalha; changing it reloads the page
+MAP = prefs.map === 'batalha' ? 'batalha' : 'halvard';
 [...$('q').querySelectorAll('button')].forEach((b, i) => {
   b.classList.toggle('on', LEVEL_ORDER[i] === level);
   b.onclick = () => { const p = loadPrefs(); p.level = LEVEL_ORDER[i]; delete p.scale; delete p.pending; savePrefs(p); reloadClean(); };
@@ -31,19 +33,23 @@ const norm = (v) => { const l = Math.hypot(...v); return v.map((x) => x / l); };
 const TIMES = {
   dusk: {
     label: 'Dusk', skyTop: [0.012, 0.022, 0.085], skyHor: [0.34, 0.13, 0.12], sunDir: norm([-0.55, 0.02, -0.83]), sunCol: [1.3, 0.45, 0.18],
-    amb: [0.022, 0.022, 0.045], glow: [0.55, 0.24, 0.14], lit: 0.45, fog: 0.00055, stars: 0.35, exposure: 1.0, beams: 0.5,
+    amb: [0.022, 0.022, 0.045], glow: [0.55, 0.24, 0.14], lit: 0.45, fog: 0.00055, stars: 0.35, exposure: 1.0, beams: 0.5, lamps: 1,
   },
   night: {
     label: 'Night', skyTop: [0.003, 0.004, 0.014], skyHor: [0.045, 0.035, 0.07], sunDir: norm([0.35, 0.5, -0.7]), sunCol: [0.07, 0.08, 0.12],
-    amb: [0.01, 0.011, 0.02], glow: [0.45, 0.22, 0.12], lit: 0.55, fog: 0.0006, stars: 1, exposure: 1.35, beams: 1,
+    amb: [0.01, 0.011, 0.02], glow: [0.45, 0.22, 0.12], lit: 0.55, fog: 0.0006, stars: 1, exposure: 1.35, beams: 1, lamps: 1,
+  },
+  day: {
+    label: 'Day', skyTop: [0.07, 0.2, 0.62], skyHor: [0.52, 0.62, 0.76], sunDir: norm([0.35, 0.82, 0.45]), sunCol: [2.3, 2.15, 1.9],
+    amb: [0.2, 0.22, 0.27], glow: [0.06, 0.06, 0.06], lit: 0, fog: 0.00045, stars: 0, exposure: 0.42, beams: 0, lamps: 0,
   },
   dawn: {
     label: 'Dawn', skyTop: [0.06, 0.11, 0.26], skyHor: [0.6, 0.38, 0.36], sunDir: norm([0.75, 0.04, 0.6]), sunCol: [1.4, 0.85, 0.55],
-    amb: [0.07, 0.07, 0.1], glow: [0.45, 0.33, 0.3], lit: 0.16, fog: 0.0008, stars: 0.05, exposure: 0.9, beams: 0,
+    amb: [0.07, 0.07, 0.1], glow: [0.45, 0.33, 0.3], lit: 0.16, fog: 0.0008, stars: 0.05, exposure: 0.9, beams: 0, lamps: 0.8,
   },
 };
-const TIME_ORDER = ['dusk', 'night', 'dawn'];
-const VEC = ['skyTop', 'skyHor', 'sunDir', 'sunCol', 'amb', 'glow'], SCAL = ['lit', 'fog', 'stars', 'exposure', 'beams'];
+const TIME_ORDER = ['dusk', 'night', 'dawn', 'day'];
+const VEC = ['skyTop', 'skyHor', 'sunDir', 'sunCol', 'amb', 'glow'], SCAL = ['lit', 'fog', 'stars', 'exposure', 'beams', 'lamps'];
 let timeKey = TIMES[prefs.time] ? prefs.time : 'dusk';
 let raining = !!prefs.rain;
 const env = { rain: raining ? 1 : 0, wet: raining ? 1 : 0 };
@@ -247,6 +253,12 @@ function setVolume(which, v) {
 }
 function setSound(on) { soundOn = on; audio.setEnabled(on); const p = loadPrefs(); p.sound = on; savePrefs(p); updateMenuButtons(); }
 [...$('t').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setTime(TIME_ORDER[i]); });
+// the map: saved, then the page starts again with it (from its first launch spot)
+[...$('mp').querySelectorAll('button')].forEach((b, i) => {
+  b.classList.toggle('on', (i === 1) === (MAP === 'batalha'));
+  $('osm').hidden = MAP !== 'batalha';
+  b.onclick = () => { const m = i === 1 ? 'batalha' : 'halvard'; if (m === MAP) return; const p = loadPrefs(); p.map = m; p.spot = 0; savePrefs(p); reloadClean(); };
+});
 [...$('r').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setRain(i === 1); });
 [...$('sg').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => setRange(i === 0); });
 [...$('so').querySelectorAll('button')].forEach((b, i) => { b.onclick = () => { setSound(i === 1); if (i === 1) audio.start(); }; });
@@ -371,7 +383,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') { goSpot(spot); toast('Respawned'); }
   if (e.code === 'KeyM') { setSound(!soundOn); toast(soundOn ? 'Sound on' : 'Sound off'); }
   if (e.code === 'KeyH') { showStats = !showStats; $('i').hidden = !showStats; }
-  if (e.code === 'KeyN') { setTime(TIME_ORDER[(TIME_ORDER.indexOf(timeKey) + 1) % 3]); toast(TIMES[timeKey].label); }
+  if (e.code === 'KeyN') { setTime(TIME_ORDER[(TIME_ORDER.indexOf(timeKey) + 1) % TIME_ORDER.length]); toast(TIMES[timeKey].label); }
   if (e.code === 'KeyU') { setRain(!raining); toast(raining ? 'Rain and wind' : 'Clear sky'); }
   if (e.code === 'BracketLeft' || e.code === 'BracketRight') { setTilt(core.uptilt + (e.code === 'BracketRight' ? 5 : -5)); toast(`Camera angle ${Math.round(core.uptilt)}°`); }
   if (e.code === 'KeyL') { setRange(!unlimited); toast(unlimited ? 'Video range: unlimited' : 'Video range: real'); }
@@ -397,7 +409,7 @@ function menuOsd(dt) {
   if (osdT > 0) return;
   osdT = 0.5;
   const s = spots[spot], f = core.frame;
-  $('oel').textContent = `HALVARD BAY \u00B7 ${placeLabel(superblockAt(s.pos[0], s.pos[2]))}`;
+  $('oel').textContent = MAP === 'batalha' ? `BATALHA \u00B7 PI \u00B7 ${batalhaPlace(s.pos[0], s.pos[2])}` : `HALVARD BAY \u00B7 ${placeLabel(superblockAt(s.pos[0], s.pos[2]))}`;
   $('oep').textContent = `${TIMES[timeKey].label} \u00B7 ${raining ? 'RAIN' : 'CLEAR'}`;
   $('oeb').textContent = f && entered ? `${Math.round(f.battery.cells) || 4}S ${f.battery.volts.toFixed(1)}V  ${Math.round(f.video.rssi)}DBM` : soundOn ? 'READY' : 'READY \u00B7 SOUND OFF';
   const t = f && entered ? f.simTime : 0;
@@ -445,11 +457,19 @@ function soundPlace(dt, f, t) {
   // right of the listener, on the ground plane
   const r = view.basis ? view.basis.r : [Math.cos(view.yaw), 0, Math.sin(view.yaw)], pan = (dx, dz) => { const l = Math.hypot(dx, dz) || 1; return clamp((dx * r[0] + dz * r[2]) / l, -1, 1); };
   // the nearest avenue: how near, how busy (by district), from how high
+  if (MAP === 'batalha') {
+    // a quiet town: a little traffic on the main roads, the town's murmur where it is built up
+    const [d, s] = roadClear(batalha(), x, z, null), busy = s ? (s.r.surf === 'asphalt' ? 0.5 : s.r.surf === 'cobble' ? 0.2 : 0.05) : 0;
+    place.traffic = busy / (1 + (Math.max(d, 0) / 30) ** 2) / (1 + (alt / 70) ** 2);
+    place.side = s ? pan(-s.uz, s.ux) * 0.3 : 0;
+    place.urban = clamp(batDensity(x, z) * 0.6, 0, 1);
+  } else {
   const sb = superblockAt(x, z), busy = BUSY[sb.kind] ?? 0.4;
   const near = [[x - sb.x0, -1, 0], [sb.x1 - x, 1, 0], [z - sb.z0, 0, -1], [sb.z1 - z, 0, 1]].reduce((a, b) => (b[0] < a[0] ? b : a));
   place.traffic = busy / (1 + (near[0] / 45) ** 2) / (1 + (alt / 70) ** 2);
   place.side = pan(near[1], near[2]) * Math.min(1, near[0] / 15);
   place.urban = clamp(coreField(x, z) * 1.5 + busy * 0.55, 0, 1);
+  }
   // walls round the listener that rise above it
   let walls = 0;
   city.eachBoxNear(x, z, 34, (b, o) => {
@@ -556,7 +576,7 @@ function frame(now) {
       + `${cs.full} pieces near, ${cs.lite} far, ${cs.pending} coming  ${R.instances} instances\nlibfpv ${core.version}`;
     if (f) {
       const st = core.inputStatus();
-      s += `\nx ${f.pos[0].toFixed(0)}  y ${f.pos[1].toFixed(1)}  z ${f.pos[2].toFixed(0)}  ${f.speedKmh.toFixed(0)} km/h  ${placeLabel(superblockAt(f.pos[0], f.pos[2]))}\n`
+      s += `\nx ${f.pos[0].toFixed(0)}  y ${f.pos[1].toFixed(1)}  z ${f.pos[2].toFixed(0)}  ${f.speedKmh.toFixed(0)} km/h  ${MAP === 'batalha' ? batalhaPlace(f.pos[0], f.pos[2]) : placeLabel(superblockAt(f.pos[0], f.pos[2]))}\n`
         + `${st.source}${st.name ? ' ' + st.name : ''}  ${f.armed ? 'ARMED' : core.armingText() || 'disarmed'}\n`
         + `video ${f.video.cnr.toFixed(1)} dB CNR  ${f.video.rssi.toFixed(0)} dBm  wind ${Math.hypot(...f.wind).toFixed(1)} m/s`;
     }

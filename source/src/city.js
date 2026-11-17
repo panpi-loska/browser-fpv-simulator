@@ -6,6 +6,8 @@
 // ---------------------------------------------------------------------------
 
 const CHUNK = 256;                  // the city is generated and streamed in squares this big (meters)
+// which map: 'halvard' (the endless city here) or 'batalha' (batalha.js); set before anything is made
+let MAP = 'halvard';
 const ROADY = 0.1;                  // top of the asphalt
 const TRAIN_Y = 14;                 // top of the elevated track
 const BLIMP_Y = 270;
@@ -51,7 +53,7 @@ function riverSlot(k) {
 }
 const riverZk = (r, x) => r.zc + r.a1 * Math.sin(x * r.f1 + r.p1) + r.a2 * Math.sin(x * r.f2 + r.p2);
 // the river whose row (x, z) may be in, or null
-function riverAt(z) { const r = riverSlot(riverK(z)); return r.on ? r : null; }
+function riverAt(z) { if (MAP !== 'halvard') return null; const r = riverSlot(riverK(z)); return r.on ? r : null; }
 function riverZ(x, z) { const r = riverAt(z); return r ? riverZk(r, x) : null; }
 function bridgeH(x, z) {
   const r = riverAt(z);
@@ -253,6 +255,7 @@ function trainLoops(p, k) {
 }
 // the loops reaching into the rectangle x0..x1, z0..z1
 function loopsNear(x0, z0, x1, z1) {
+  if (MAP !== 'halvard') return [];
   const out = [];
   for (let i = Math.floor((x0 - 2000 - AVE.x0) / AVE.period) - 3; i <= Math.ceil((x1 - AVE.x0) / AVE.period) + 3; i++) {
     if (!trainWest(i)) continue;
@@ -441,6 +444,7 @@ function findSpecial(sp, x0, z0) {
   return null;
 }
 function launchSpots() {
+  if (MAP === 'batalha') return batalhaSpots();
   const r0 = riverSlot(0), sx = aveX(0), rz = (x) => riverZk(r0, x), wx = (aveX(0) + aveX(1)) / 2;   // the Ferris wheel's x
   const spots = [
     { name: 'Downtown avenue', pos: [sx + AVE.w / 2 + 1.8, 2.2, -120], at: [sx, 40, -700] },

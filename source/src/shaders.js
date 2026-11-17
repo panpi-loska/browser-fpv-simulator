@@ -14,12 +14,13 @@ struct U {
   skyTop: vec4f,  // w: share of windows lit
   skyHor: vec4f,  // w: fog density
   sunDir: vec4f,  // w: star brightness
-  sunCol: vec4f,
+  sunCol: vec4f,  // w: the lights (1 lit, 0 by day: lamps, signs and lit windows off)
   amb: vec4f,     // w: rain particles
   glow: vec4f,    // city glow color, w: clip plane height
   p1: vec4f,      // x clip below plane, y/z target size, w reflection texture available
   p2: vec4f,      // x radians per pixel, y wetness, z searchlight strength
-  right: vec4f, up: vec4f,
+  right: vec4f,  // w: the map (0 Halvard Bay, 1 Batalha)
+  up: vec4f,
 };
 struct Inst { m0: vec4f, m1: vec4f, m2: vec4f, col: vec4f, p: vec4f, q: vec4f };
 @group(0) @binding(0) var<uniform> u: U;
@@ -91,6 +92,7 @@ fn riverSlot(k: i32) -> River {
 }
 // how far (x, z) is from the nearest river's bank (negative: in the water)
 fn riverDist(x: f32, z: f32) -> f32 {
+  if (u.right.w > 0.5) { return 1e6; }
   let r = riverSlot(i32(floor((z - RIVER_Z0) / RIVER_P + 0.5)));
   if (!r.on) { return 1e9; }
   return abs(z - (r.zc + r.a1 * sin(x * r.f1 + r.p1) + r.a2 * sin(x * r.f2 + r.p2))) - r.hw;
@@ -262,7 +264,20 @@ fn tileOK(w: vec3f) -> bool {
 }
 fn lightAt(w: vec3f) -> vec4f {
   if (!tileOK(w)) { return vec4f(0.0, 0.0, 0.0, 1.0); }
-  return textureSampleLevel(lightTex, sampW, w.xz / SPAN, 0.0);
+  let t = textureSampleLevel(lightTex, sampW, w.xz / SPAN, 0.0);
+  return vec4f(t.rgb * u.sunCol.w, t.a);
+}
+fn batalhaMap() -> bool { return u.right.w > 0.5; }
+// the cerrado round Batalha, from above: thick green bush in patches, open dry grass between, red earth
+// where it is cleared (the trees in it are batalha.js batBush, where the bush is thickest)
+fn cerrado(w: vec3f) -> vec3f {
+  let v = vnoise(w.xz / 140.0 + vec2f(11.3, -4.1)) * 0.65 + vnoise(w.xz / 37.0) * 0.35;
+  let canopy = vec3f(0.028, 0.055, 0.024) * (0.6 + 0.8 * vnoise(w.xz * 0.35));
+  let grass = vec3f(0.085, 0.085, 0.042) * (0.75 + 0.5 * fbm(w.xz * 0.08));
+  let earth = vec3f(0.16, 0.075, 0.04) * (0.8 + 0.4 * fbm(w.xz * 0.2));
+  var c = mix(grass, canopy, smoothstep(0.42, 0.58, v));
+  c = mix(c, earth, smoothstep(0.66, 0.74, vnoise(w.xz / 260.0 + vec2f(-3.7, 8.2))) * (1.0 - smoothstep(0.4, 0.55, v)));
+  return c;
 }
 // the light that is everywhere: a little from all round, the city's glow from below and low down, and
 // the sky's own light on whatever faces up (so roofs, cars and lawns are not black after sunset)
@@ -423,12 +438,18 @@ fn shadeShop(I: Inst, w: vec3f, uC: f32, face: u32, seed: u32, wallC: vec3f, ref
   let y = w.y;
   // the window, between the piers and over a low wall
   if (sf > 0.07 && sf < 0.93 && y > 0.5 && y < 3.3) {
-    if (on) {
+    if (batalhaMap()) {
+      // a shop in the interior: wide doorways, open by day (the dark inside, goods at the door), a
+      // painted roller door down at night, now and then one still open with a bare bulb
+      let open = u.sunCol.w < 0.5 || rnd(sh ^ 0x91u) < 0.15;
+      if (open) { c = vec3f(0.015, 0.012, 0.01) + vec3f(1.0, 0.78, 0.5) * 0.12 * u.sunCol.w * smoothstep(0.5, 3.0, y) + wallC * 0.15 * step(y, 1.0); }
+      else { c = mix(vec3f(0.16, 0.17, 0.18), hue(r1) * 0.25 + 0.05, step(0.6, r2)) * light * (0.7 + 0.3 * step(0.5, fract(y * 6.0))); }
+    } else if (on) {
       // warm in most, cold white in a few (a pharmacy, a 24 h store), now and then a tint
       var lc = vec3f(1.0, 0.74, 0.46);
       if (r2 < 0.22) { lc = vec3f(0.78, 0.9, 1.0); } else if (r2 > 0.9) { lc = hue(r1) * 0.5 + 0.5; }
       let inX = (sf - 0.07) / 0.86;
-      var g = lc * (0.16 + 0.34 * r1) * (0.35 + 0.65 * smoothstep(0.5, 3.3, y));
+      var g = lc * (0.16 + 0.34 * r1) * (0.35 + 0.65 * smoothstep(0.5, 3.3, y)) * mix(0.3, 1.0, u.sunCol.w);
       // what stands inside: shelves along the back, shapes in the window
       let col = floor(inX * (5.0 + floor(r3 * 4.0)));
       let hgt = 0.9 + 1.5 * rnd(sh ^ (u32(col) * 31u + 17u));
@@ -456,11 +477,14 @@ fn shadeShop(I: Inst, w: vec3f, uC: f32, face: u32, seed: u32, wallC: vec3f, ref
     let sc = hue(rnd(sh ^ 0x55u));
     let flick = select(1.0, 0.2, rnd(sh ^ 5u) < 0.12 && rnd(sh ^ u32(u.cam.w * 9.0)) < 0.05);
     let far = smoothstep(0.25, 0.9, fw * n / (5.3 * lw));   // too far to read: the sign's average
-    if (on && kind < want * 0.45) {            // a light box: pale, coloured letters
+    if (batalhaMap()) {                        // a country town: the shop's name painted on the wall over the door
+      let paint = mix(sc * 0.35 + 0.08, vec3f(0.45, 0.43, 0.4), step(0.5, r3));
+      c = mix(paint, mix(sc * 0.12, vec3f(0.05), step(0.5, r3)), glyph * (1.0 - far) + 0.25 * far) * light;
+    } else if (on && kind < want * 0.45) {            // a light box: pale, coloured letters
       let box = mix(vec3f(1.0, 0.95, 0.85), sc, 0.12) * 0.9;
-      c = mix(mix(box, sc * 0.25, glyph), mix(box, sc * 0.25, 0.3), far) * flick;
+      c = mix(mix(box, sc * 0.25, glyph), mix(box, sc * 0.25, 0.3), far) * flick * mix(0.3, 1.0, u.sunCol.w);
     } else if (on && kind < want) {            // neon on a dark fascia
-      c = wallC * 0.3 + mix(glyph, 0.3, far) * (sc * 1.9 + 0.25) * flick;
+      c = wallC * 0.3 + mix(glyph, 0.3, far) * (sc * 1.9 + 0.25) * flick * u.sunCol.w;
     } else if (kind > 0.72) {                  // an awning: stripes, lit only by the street
       let st = step(0.5, fract(tx * (4.0 + floor(r1 * 5.0))));
       c = mix(sc * 0.22 + 0.03, vec3f(0.3, 0.29, 0.27), st * step(0.5, r3)) * light * (0.6 + 0.4 * sy);
@@ -570,6 +594,21 @@ fn shadeRoad(I: Inst, w: vec3f, n: vec3f, lp: vec3f, fp: vec2f, V: vec3f) -> vec
   var alb = vec3f(0.032, 0.033, 0.037) * (0.75 + 0.5 * fbm(w.xz * 0.12));
   var mark = 0.0; var yel = 0.0;
   let size = instSize(I);
+  if (I.q.w > 2.5) {
+    var dirt = I.q.w > 3.5;
+    if (!dirt) {   // cobbles: grey stones in rows, the joints dark (fading out with distance)
+      let g = w.xz * vec2f(2.4, 3.2); let cell = floor(g); let f = fract(g + vec2f(0.5 * (cell.y - 2.0 * floor(cell.y / 2.0)), 0.0));
+      let e = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+      let fade = 1.0 - smoothstep(0.05, 0.25, fwidth(g.x));
+      alb = vec3f(0.085, 0.08, 0.072) * (0.7 + 0.5 * fbm(w.xz * 0.15)) * mix(1.0, mix(0.55, 1.0, smoothstep(0.02, 0.12, e)) * (0.85 + 0.3 * h21(cell)), fade);
+    } else {       // red dirt, with two worn wheel tracks along it
+      alb = vec3f(0.17, 0.085, 0.048) * (0.72 + 0.56 * fbm(w.xz * 0.3));
+    }
+    var c = alb * (ambientL(n, w.y) + sunL(n) + L.rgb * 4.0) * mix(0.5, 1.0, L.a);
+    let wet = u.p2.y * select(1.0, 0.5, dirt);
+    let fr = fresnel(clamp(-dot(V, n), 0.0, 1.0));
+    return c * (1.0 - wet * 0.3) + reflSample(fp, V, n, w, 1.0 + 3.0 * wet) * min((0.1 + 0.9 * fr) * wet * 0.5, 0.5);
+  }
   // q: axis (the local axis the road runs along), width, lanes, mode (0 a road, 1 a crossing, 2 plain)
   if (I.q.w < 0.5) {
     // along: the distance along the road's direction (continuous over pieces in a line); across: local
@@ -698,14 +737,14 @@ struct PO {
   var col: vec3f;
   switch u32(I.p.x + 0.5) {
     case 1u: { col = shadeBuilding(I, i.w, n, i.lp, V); }
-    case 2u: { col = I.col.rgb * I.col.a * i.em; }
+    case 2u: { col = mix(I.col.rgb * 0.3 * (ambientL(n, i.w.y) + sunL(n)), I.col.rgb * I.col.a * i.em, u.sunCol.w); }
     case 3u: { col = shadeRoad(I, i.w, n, i.lp, i.pos.xy, V); }
     case 4u: { col = shadeSidewalk(i.w, n, i.pos.xy, V); }
     case 5u: {
       let alb = I.col.rgb * (0.55 + 0.8 * vnoise(i.w.xz * 0.8 + vec2f(i.w.y * 0.7)));
       col = alb * (ambientL(n, i.w.y) + sunL(n) * 0.8 + lightAt(i.w).rgb * 4.0 * exp(-max(i.w.y, 0.0) / 9.0) * (0.5 + 0.5 * max(n.y, 0.0)));
     }
-    case 7u: { col = shadeNeon(I, i.lp, n, i.w); }
+    case 7u: { col = shadeNeon(I, i.lp, n, i.w) * mix(0.35, 1.0, u.sunCol.w); }
     case 8u: { col = shadeTrain(I, i.lp, n, i.w); }
     default: {
       let alb = select(I.col.rgb, i.cc.rgb, i.cc.a > 0.5);
@@ -789,11 +828,19 @@ fn suburbLights(w: vec3f) -> vec3f {
     let seams = 1.0 - smoothstep(0.03, 0.12, fwidth(w.x) / 1.5);
     alb = vec3f(0.1, 0.098, 0.094) * mix(1.0, mix(0.6, 1.0, smoothstep(0.0, 0.05, e)) * (0.8 + 0.4 * h21(floor(w.xz / 1.5))), seams);
   }
+  else if (ty == 10u) {   // a yard: bare earth, some grass
+    alb = mix(vec3f(0.13, 0.08, 0.05), vec3f(0.06, 0.08, 0.035), smoothstep(0.35, 0.7, fbm(w.xz * 0.25))) * (0.8 + 0.4 * vnoise(w.xz * 1.3));
+  }
+  else if (ty == 12u) {   // a creek bed: dark wet mud and a thread of water
+    alb = vec3f(0.03, 0.035, 0.025) * (0.7 + 0.6 * fbm(w.xz * 0.4));
+  }
+  else if (batalhaMap()) { alb = cerrado(w); }
   else { alb = vec3f(0.05, 0.045, 0.04) * (0.7 + 0.6 * fbm(w.xz * 0.2)); }
   var c = alb * (ambientL(n, 0.0) + sunL(n) + L.rgb * 4.0) * mix(0.4, 1.0, L.a);
+  if (ty == 12u) { c += reflSample(i.pos.xy, V, n, w, 1.0) * (0.05 + 0.5 * fresnel(clamp(-dot(V, n), 0.0, 1.0))) * 0.5; }
   if (ty == 8u) { c += reflSample(i.pos.xy, V, n, w, 1.0) * (0.05 + 0.6 * fresnel(clamp(-dot(V, n), 0.0, 1.0))) * u.p2.y * 0.6; }
   if (pond > 0.01) { c = mix(c, waterColor(w, V, i.pos.xy), pond); }
-  if (ty == 7u) { c += suburbLights(w); }
+  if (ty == 7u && !batalhaMap()) { c += suburbLights(w) * u.sunCol.w; }
   return vec4f(applyFog(c, w), 1.0);
 }
 @fragment fn fs_water(i: GO) -> @location(0) vec4f {
@@ -852,7 +899,7 @@ struct SO { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1) 
   var o: SO;
   o.pos = u.viewProj * vec4f(c + (u.right.xyz * corner.x + u.up.xyz * corner.y) * s, 1.0);
   o.uv = corner;
-  o.col = col * I.col.a * k * (1.0 - fogF(c));
+  o.col = col * I.col.a * k * (1.0 - fogF(c)) * u.sunCol.w;
   return o;
 }
 @fragment fn fs_sprite(i: SO) -> @location(0) vec4f {

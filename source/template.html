@@ -103,6 +103,7 @@ p { margin: 0; }
 }
 #pn input::placeholder { color: var(--mute); }
 #pn input:focus { border-color: var(--ink); }
+.credit { font-size: .7em; color: var(--dim); margin: -.2em 0 .4em; }
 .vol b { flex: 3; text-align: center; font-weight: 400; font-size: .86em; color: var(--ink); letter-spacing: .08em; white-space: nowrap; }
 .vol button { flex: .45; }
 .off .vol, .off .vol b { color: var(--mute); }
@@ -225,7 +226,9 @@ body:not(.g) #v { display: none; }
         </div>
         <div class=opts id=gw>
           <p class=label>World</p>
-          <p class=row id=t><span>Time</span><button>Dusk</button><button>Night</button><button>Dawn</button></p>
+          <p class=row id=mp><span>Map</span><button>Halvard Bay</button><button>Batalha</button></p>
+          <p class=credit id=osm hidden>Batalha, Piauí: map data © OpenStreetMap contributors (ODbL)</p>
+          <p class=row id=t><span>Time</span><button>Dusk</button><button>Night</button><button>Dawn</button><button>Day</button></p>
           <p class=row id=r><span>Weather</span><button>Clear</button><button>Rain</button></p>
         </div>
         <div class=opts id=gs>

@@ -32,7 +32,7 @@ function createStreamer(Q, R, core) {
       const w = workers.reduce((a, b) => (b.busy < a.busy ? b : a));
       w.busy++;
       inflight.set(id, { k, lod, w });
-      w.postMessage({ id, cx, cz, lod, Q });
+      w.postMessage({ id, cx, cz, lod, Q, map: MAP });
     } else {
       inflight.set(id, { k, lod });
       sync.push({ id, cx, cz, lod });
